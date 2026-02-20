@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="ChronoHub - Suite completa de herramientas de tiempo: temporizador, alarma, cronómetro, cuenta atrás, reloj mundial y calculadoras. Gratis y fácil de usar.">
+    <title>ChronoHub - Herramientas de Tiempo Online Gratis</title>
+    <link rel="stylesheet" href="styles.css?v=9">
+    <link rel="icon" href="logo.png" type="image/png">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="brand">
+                <div class="brand-logo">⏰</div>
+                <div class="brand-text">
+                    <h1>ChronoHub</h1>
+                    <p class="brand-subtitle">Tus herramientas de tiempo</p>
+                </div>
+            </div>
+            <div class="header-controls">
+                <button id="themeToggle" class="icon-btn" title="Cambiar tema" aria-label="Cambiar entre tema claro y oscuro">🌓</button>
+                <button id="fullscreenBtn" class="icon-btn" title="Pantalla completa" aria-label="Activar pantalla completa">⛶</button>
+            </div>
+        </header>
+
+        <!-- Navigation Tabs -->
+        <nav class="tabs">
+            <button class="mobile-tabs-toggle" id="mobileTabsToggle">
+                <span id="currentTabName">⏱️ Temporizador</span>
+                <span class="dropdown-arrow">▼</span>
+            </button>
+            <div class="tabs-list" id="tabsList">
+                <button class="tab-btn" data-tab="timer">⏱️ Temporizador</button>
+                <button class="tab-btn" data-tab="alarm">⏰ Alarma</button>
+                <button class="tab-btn" data-tab="countdown">⏳ Cuenta Atrás</button>
+                <button class="tab-btn" data-tab="stopwatch">⏲️ Cronómetro</button>
+                <button class="tab-btn" data-tab="clock">🕐 Reloj</button>
+                <button class="tab-btn" data-tab="worldclock">🌍 Reloj Mundial</button>
+                <button class="tab-btn" data-tab="datecalc">📅 Calc. Fechas</button>
+                <button class="tab-btn" data-tab="timecalc">🕒 Calc. Horas</button>
+                <button class="tab-btn" data-tab="week">📆 Semana Actual</button>
+                <button class="tab-btn" data-tab="age">🎂 Calc. Edad</button>
+            </div>
+        </nav>
+
+        <!-- TAB: Timer -->
+        <div id="tab-timer" class="tab-content active">
+        <div class="timer-display">
+            <div class="time-input">
+                <div class="time-group">
+                    <input type="number" id="hours" min="0" max="23" value="0" class="time-input-field">
+                    <span class="time-label">horas</span>
+                </div>
+                <span class="time-separator">:</span>
+                <div class="time-group">
+                    <input type="number" id="minutes" min="0" max="59" value="5" class="time-input-field">
+                    <span class="time-label">minutos</span>
+                </div>
+                <span class="time-separator">:</span>
+                <div class="time-group">
+                    <input type="number" id="seconds" min="0" max="59" value="0" class="time-input-field">
+                    <span class="time-label">segundos</span>
+                </div>
+            </div>
+            
+            <!-- Progress Circle -->
+            <div class="progress-ring">
+                <svg class="progress-ring-svg" width="300" height="300">
+                    <circle class="progress-ring-circle-bg" cx="150" cy="150" r="135"></circle>
+                    <circle class="progress-ring-circle" cx="150" cy="150" r="135"></circle>
+                </svg>
+                <div class="timer-text" id="timerDisplay">05:00</div>
+            </div>
+        </div>
+
+        <!-- Quick Presets -->
+        <div class="presets">
+            <button class="preset-btn" data-time="300">5 min</button>
+            <button class="preset-btn" data-time="600">10 min</button>
+            <button class="preset-btn" data-time="900">15 min</button>
+            <button class="preset-btn" data-time="1800">30 min</button>
+            <button class="preset-btn" data-time="3600">1 hora</button>
+        </div>
+
+        <!-- Control Buttons -->
+        <div class="controls">
+            <button id="startBtn" class="control-btn primary" aria-label="Iniciar temporizador">▶ Iniciar</button>
+            <button id="pauseBtn" class="control-btn" style="display: none;" aria-label="Pausar temporizador">⏸ Pausar</button>
+            <button id="resetBtn" class="control-btn" aria-label="Reiniciar temporizador">↻ Reiniciar</button>
+        </div>
+
+        <!-- Settings Panel -->
+        <div class="settings-panel">
+            <h3>⚙️ Configuración</h3>
+            <div class="setting-item">
+                <label for="alarmSound">Sonido de alarma:</label>
+                <select id="alarmSound">
+                    <option value="beep">Beep clásico</option>
+                    <option value="bell">Campana</option>
+                    <option value="digital">Digital</option>
+                    <option value="gentle">Suave</option>
+                </select>
+            </div>
+            <div class="setting-item">
+                <label for="volume">Volumen:</label>
+                <input type="range" id="volume" min="0" max="100" value="70">
+                <span id="volumeValue">70%</span>
+            </div>
+            <div class="setting-item">
+                <label>
+                    <input type="checkbox" id="notifications" checked>
+                    Notificaciones del navegador
+                </label>
+            </div>
+            <div class="setting-item">
+                <label>
+                    <input type="checkbox" id="autoRepeat">
+                    Repetir automáticamente
+                </label>
+            </div>
+            <div class="setting-item">
+                <label for="customAlarmSound">Subir sonido personalizado:</label>
+                <input type="file" id="customAlarmSound" accept="audio/*">
+            </div>
+        </div>
+
+        <!-- History -->
+        <div class="history-panel">
+            <h3>📜 Historial</h3>
+            <div id="historyList" class="history-list"></div>
+        </div>
+
+        <!-- Keyboard Shortcuts Info -->
+        <div class="shortcuts-info">
+            <details>
+                <summary>⌨️ Atajos de teclado</summary>
+                <ul>
+                    <li><kbd>Espacio</kbd> - Iniciar/Pausar</li>
+                    <li><kbd>R</kbd> - Reiniciar</li>
+                    <li><kbd>F</kbd> - Pantalla completa</li>
+                    <li><kbd>T</kbd> - Cambiar tema</li>
+                </ul>
+            </details>
+        </div>
+        </div>
+
+        <!-- TAB: Alarm -->
+        <div id="tab-alarm" class="tab-content">
+            <div class="alarm-container">
+                <h2>⏰ Configurar Alarma</h2>
+                <div class="alarm-time-input">
+                    <input type="time" id="alarmTime" class="alarm-input">
+                </div>
+                <div class="alarm-controls">
+                    <button id="setAlarm" class="control-btn primary">Establecer Alarma</button>
+                    <button id="cancelAlarm" class="control-btn">Cancelar Alarma</button>
+                </div>
+                <div id="alarmsList" class="alarms-list"></div>
+            </div>
+        </div>
+
+        <!-- TAB: Countdown -->
+        <div id="tab-countdown" class="tab-content">
+            <div class="countdown-container">
+                <h2>⏳ Cuenta Atrás hasta...</h2>
+                <div class="calc-section">
+                    <h3>🎯 Cuenta atrás personalizada</h3>
+                    <div class="datetime-input-group">
+                        <div class="input-with-icon">
+                            <span class="input-icon">📅</span>
+                            <div>
+                                <label>Fecha objetivo:</label>
+                                <input type="date" id="countdownDate" class="date-input">
+                            </div>
+                        </div>
+                        <div class="input-with-icon">
+                            <span class="input-icon">🕐</span>
+                            <div>
+                                <label>Hora:</label>
+                                <input type="time" id="countdownTime" class="date-input">
+                            </div>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 8px; font-weight: 600; color: var(--text-secondary); font-size: 0.9rem;">Nombre del evento (opcional):</label>
+                        <input type="text" id="countdownName" placeholder="Ej: Mi cumpleaños, Viaje, etc" class="date-input" style="width: 100%; padding: 12px; border: 2px solid var(--border-color); border-radius: 12px; background: var(--card-bg); color: var(--text-color);">
+                    </div>
+                    <button id="setCountdown" class="control-btn primary">⏳ Crear Cuenta Atrás</button>
+                </div>
+                <div id="countdownDisplay" class="countdown-display">
+                    <div class="countdown-item">
+                        <span class="countdown-value" id="cdDays">0</span>
+                        <span class="countdown-label">días</span>
+                    </div>
+                    <div class="countdown-item">
+                        <span class="countdown-value" id="cdHours">0</span>
+                        <span class="countdown-label">horas</span>
+                    </div>
+                    <div class="countdown-item">
+                        <span class="countdown-value" id="cdMinutes">0</span>
+                        <span class="countdown-label">minutos</span>
+                    </div>
+                    <div class="countdown-item">
+                        <span class="countdown-value" id="cdSeconds">0</span>
+                        <span class="countdown-label">segundos</span>
+                    </div>
+                </div>
+                <div id="countdownEventName" class="countdown-event-name"></div>
+            </div>
+        </div>
+
+        <!-- TAB: Stopwatch -->
+        <div id="tab-stopwatch" class="tab-content">
+            <div class="stopwatch-container">
+                <h2>⏲️ Cronómetro</h2>
+                <div class="stopwatch-display" id="stopwatchDisplay">00:00:00.000</div>
+                <div class="stopwatch-controls">
+                    <button id="startStopwatch" class="control-btn primary">▶ Iniciar</button>
+                    <button id="pauseStopwatch" class="control-btn" style="display:none;">⏸ Pausar</button>
+                    <button id="resetStopwatch" class="control-btn">↻ Reiniciar</button>
+                    <button id="lapStopwatch" class="control-btn">🏁 Vuelta</button>
+                </div>
+                <div id="lapsList" class="laps-list"></div>
+            </div>
+        </div>
+
+        <!-- TAB: Clock -->
+        <div id="tab-clock" class="tab-content">
+            <div class="clock-container">
+                <h2>🕐 Reloj Digital</h2>
+                <div class="digital-clock" id="digitalClock">00:00:00</div>
+                <div class="clock-date" id="clockDate"></div>
+                <div class="analog-clock">
+                    <svg viewBox="0 0 200 200" class="clock-svg">
+                        <circle cx="100" cy="100" r="98" class="clock-face"/>
+                        <line x1="100" y1="100" x2="100" y2="40" class="clock-hand hour-hand" id="hourHand"/>
+                        <line x1="100" y1="100" x2="100" y2="30" class="clock-hand minute-hand" id="minuteHand"/>
+                        <line x1="100" y1="100" x2="100" y2="25" class="clock-hand second-hand" id="secondHand"/>
+                        <circle cx="100" cy="100" r="5" class="clock-center"/>
+                    </svg>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB: World Clock -->
+        <div id="tab-worldclock" class="tab-content">
+            <div class="worldclock-container">
+                <h2>🌍 Reloj Mundial</h2>
+                <div class="timezone-selector">
+                    <select id="timezoneSelect" class="timezone-input">
+                        <option value="America/New_York">Nueva York (EST)</option>
+                        <option value="America/Los_Angeles">Los Ángeles (PST)</option>
+                        <option value="America/Chicago">Chicago (CST)</option>
+                        <option value="America/Mexico_City">Ciudad de México</option>
+                        <option value="America/Bogota">Bogotá</option>
+                        <option value="America/Lima">Lima</option>
+                        <option value="America/Santiago">Santiago</option>
+                        <option value="America/Buenos_Aires">Buenos Aires</option>
+                        <option value="Europe/London">Londres (GMT)</option>
+                        <option value="Europe/Paris">París (CET)</option>
+                        <option value="Europe/Madrid" selected>Madrid (CET)</option>
+                        <option value="Europe/Berlin">Berlín (CET)</option>
+                        <option value="Europe/Moscow">Moscú (MSK)</option>
+                        <option value="Asia/Dubai">Dubái</option>
+                        <option value="Asia/Kolkata">Nueva Delhi</option>
+                        <option value="Asia/Bangkok">Bangkok</option>
+                        <option value="Asia/Shanghai">Shanghái</option>
+                        <option value="Asia/Tokyo">Tokio</option>
+                        <option value="Australia/Sydney">Sídney</option>
+                        <option value="Pacific/Auckland">Auckland</option>
+                    </select>
+                    <button id="addTimezone" class="control-btn primary">+ Añadir</button>
+                </div>
+                <div id="worldClockList" class="worldclock-list"></div>
+            </div>
+        </div>
+
+        <!-- TAB: Date Calculator -->
+        <div id="tab-datecalc" class="tab-content">
+            <div class="datecalc-container">
+                <h2>📅 Calculadora de Fechas</h2>
+                <div class="calc-section">
+                    <h3>📊 Diferencia entre fechas</h3>
+                    <div class="datetime-input-group">
+                        <div class="input-with-icon">
+                            <span class="input-icon">📅</span>
+                            <div>
+                                <label>Fecha inicial:</label>
+                                <input type="date" id="dateFrom" class="date-input">
+                            </div>
+                        </div>
+                        <div class="input-with-icon">
+                            <span class="input-icon">🏁</span>
+                            <div>
+                                <label>Fecha final:</label>
+                                <input type="date" id="dateTo" class="date-input">
+                            </div>
+                        </div>
+                    </div>
+                    <button id="calcDateDiff" class="control-btn primary">📊 Calcular diferencia</button>
+                    <div id="dateDiffResult" class="calc-result"></div>
+                </div>
+                <div class="calc-section">
+                    <h3>✨ Añadir/Restar tiempo</h3>
+                    <div class="datetime-input-group">
+                        <div class="input-with-icon">
+                            <span class="input-icon">📅</span>
+                            <div>
+                                <label>Fecha inicial:</label>
+                                <input type="date" id="baseDate" class="date-input">
+                            </div>
+                        </div>
+                        <div class="input-with-icon">
+                            <span class="input-icon">🕐</span>
+                            <div>
+                                <label>Hora inicial:</label>
+                                <input type="time" id="baseTime" class="date-input" value="00:00">
+                            </div>
+                        </div>
+                    </div>
+                    <div class="time-amount-grid">
+                        <div class="time-card">
+                            <div class="time-card-icon">📆</div>
+                            <label>Días</label>
+                            <input type="number" id="daysAmount" class="time-amount-input" placeholder="0" value="0">
+                        </div>
+                        <div class="time-card">
+                            <div class="time-card-icon">⏰</div>
+                            <label>Horas</label>
+                            <input type="number" id="hoursAmount" class="time-amount-input" placeholder="0" value="0" min="0">
+                        </div>
+                        <div class="time-card">
+                            <div class="time-card-icon">⏱️</div>
+                            <label>Minutos</label>
+                            <input type="number" id="minutesAmount" class="time-amount-input" placeholder="0" value="0" min="0">
+                        </div>
+                    </div>
+                    <div class="calc-buttons">
+                        <button id="calcAddDays" class="control-btn primary">➕ Añadir</button>
+                        <button id="calcSubDays" class="control-btn secondary">➖ Restar</button>
+                    </div>
+                    <div id="dateAddResult" class="calc-result"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB: Time Calculator -->
+        <div id="tab-timecalc" class="tab-content">
+            <div class="timecalc-container">
+                <h2>🕒 Calculadora de Horas</h2>
+                <div class="calc-section">
+                    <h3>⚡ Sumar/Restar tiempo</h3>
+                    <div class="time-calc-display">
+                        <div class="time-input-card">
+                            <div class="time-input-label">Tiempo 1</div>
+                            <div class="time-calc-inputs">
+                                <input type="number" id="tcHours1" placeholder="H" class="time-calc-input" min="0">
+                                <span class="time-separator">:</span>
+                                <input type="number" id="tcMinutes1" placeholder="M" class="time-calc-input" min="0" max="59">
+                                <span class="time-separator">:</span>
+                                <input type="number" id="tcSeconds1" placeholder="S" class="time-calc-input" min="0" max="59">
+                            </div>
+                        </div>
+                        <div class="time-calc-operator">
+                            <button id="tcAdd" class="control-btn primary">➕</button>
+                            <button id="tcSubtract" class="control-btn secondary">➖</button>
+                        </div>
+                        <div class="time-input-card">
+                            <div class="time-input-label">Tiempo 2</div>
+                            <div class="time-calc-inputs">
+                                <input type="number" id="tcHours2" placeholder="H" class="time-calc-input" min="0">
+                                <span class="time-separator">:</span>
+                                <input type="number" id="tcMinutes2" placeholder="M" class="time-calc-input" min="0" max="59">
+                                <span class="time-separator">:</span>
+                                <input type="number" id="tcSeconds2" placeholder="S" class="time-calc-input" min="0" max="59">
+                            </div>
+                        </div>
+                    </div>
+                    <div id="timeCalcResult" class="calc-result"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB: Current Week -->
+        <div id="tab-week" class="tab-content">
+            <div class="week-container">
+                <h2>📆 Semana Actual</h2>
+                <div class="week-info">
+                    <div class="week-number">
+                        <span class="week-label">Número de semana:</span>
+                        <span class="week-value" id="weekNumber">1</span>
+                    </div>
+                    <div class="week-range">
+                        <span id="weekRange"></span>
+                    </div>
+                </div>
+                <div class="week-calendar" id="weekCalendar"></div>
+            </div>
+        </div>
+
+        <!-- TAB: Age Calculator -->
+        <div id="tab-age" class="tab-content">
+            <div class="age-container">
+                <h2>🎂 Calculadora de Edad</h2>
+                <div class="calc-section">
+                    <h3>🎉 Calcula tu edad exacta</h3>
+                    <div class="input-with-icon" style="max-width: 500px; margin: 0 auto 25px;">
+                        <span class="input-icon">🎂</span>
+                        <div style="flex: 1;">
+                            <label>Fecha de nacimiento:</label>
+                            <input type="date" id="birthDate" class="date-input">
+                        </div>
+                    </div>
+                    <div class="calc-buttons">
+                        <button id="calcAge" class="control-btn primary">🎁 Calcular Edad</button>
+                    </div>
+                </div>
+                <div id="ageResult" class="age-result">
+                    <div class="age-item">
+                        <span class="age-value" id="ageYears">0</span>
+                        <span class="age-label">años</span>
+                    </div>
+                    <div class="age-item">
+                        <span class="age-value" id="ageMonths">0</span>
+                        <span class="age-label">meses</span>
+                    </div>
+                    <div class="age-item">
+                        <span class="age-value" id="ageDays">0</span>
+                        <span class="age-label">días</span>
+                    </div>
+                </div>
+                <div id="ageDetails" class="age-details"></div>
+            </div>
+        </div>
+
+        <!-- Info Section -->
+        <section class="info-section" id="infoSection">
+            <button class="info-toggle" id="infoToggle">📖 Información y Ayuda</button>
+            
+            <div class="info-content" id="infoContent" style="display: none;">
+                <div class="info-grid">
+                    <div class="info-card">
+                        <h3>¿Qué es ChronoHub?</h3>
+                        <p>ChronoHub es tu suite completa de herramientas de tiempo, totalmente gratuita y sin registro. Incluye temporizador con cuenta regresiva, alarmas personalizables, cronómetro de alta precisión, cuenta atrás para eventos, relojes mundiales, y calculadoras especializadas para fechas, horas y edad.</p>
+                        <p>Funciona 100% en tu navegador, sin necesidad de instalar nada. Tus configuraciones se guardan automáticamente.</p>
+                    </div>
+
+                    <div class="info-card">
+                        <h3>⏱️ Cómo usar el Temporizador</h3>
+                        <ol>
+                            <li>Establece las <strong>horas, minutos y segundos</strong> deseados</li>
+                            <li>O selecciona un <strong>preset rápido</strong> (5, 10, 15, 30 min, 1 hora)</li>
+                            <li>Haz clic en <strong>Iniciar</strong> para comenzar la cuenta regresiva</li>
+                            <li>Usa <strong>Pausar</strong> para detener temporalmente</li>
+                            <li>Usa <strong>Reiniciar</strong> para volver al tiempo original</li>
+                            <li>Cuando llegue a cero, sonará la alarma automáticamente</li>
+                        </ol>
+                        <p><strong>Tip:</strong> Presiona <kbd>Espacio</kbd> para iniciar/pausar rápidamente.</p>
+                    </div>
+
+                    <div class="info-card">
+                        <h3>⏰ Configurar Alarmas</h3>
+                        <p>En la pestaña de Alarma, selecciona la hora exacta en que quieres recibir una notificación. Puedes crear múltiples alarmas simultáneas. La alarma sonará incluso si tienes la pestaña en segundo plano.</p>
+                        <p><strong>Importante:</strong> Mantén la pestaña del navegador abierta para que las alarmas funcionen correctamente.</p>
+                    </div>
+
+                    <div class="info-card">
+                        <h3>⏲️ Usar el Cronómetro</h3>
+                        <p>Perfecto para medir tiempos de entrenamiento, estudio o cualquier actividad. Registra vueltas con precisión de milisegundos. Ideal para runners, estudiantes usando técnica Pomodoro, o deportes de precisión.</p>
+                    </div>
+
+                    <div class="info-card">
+                        <h3>⏳ Cuenta Atrás para Eventos</h3>
+                        <p>Crea una cuenta regresiva hasta una fecha importante: cumpleaños, vacaciones, exámenes, bodas, etc. Muestra exactamente cuántos días, horas, minutos y segundos faltan. Dale un nombre personalizado al evento.</p>
+                    </div>
+
+                    <div class="info-card">
+                        <h3>🌍 Reloj Mundial</h3>
+                        <p>Añade múltiples zonas horarias para coordinar reuniones internacionales, llamadas con familiares en otros países, o simplemente saber la hora en cualquier parte del mundo. Incluye más de 20 ciudades principales.</p>
+                    </div>
+
+                    <div class="info-card">
+                        <h3>📅 Calculadoras Útiles</h3>
+                        <ul>
+                            <li><strong>Fechas:</strong> Calcula diferencias entre fechas o suma/resta días</li>
+                            <li><strong>Horas:</strong> Suma o resta períodos de tiempo</li>
+                            <li><strong>Edad:</strong> Calcula tu edad exacta y próximo cumpleaños</li>
+                            <li><strong>Semana:</strong> Conoce el número de semana actual del año</li>
+                        </ul>
+                    </div>
+
+                    <div class="info-card">
+                        <h3>🎯 Casos de uso populares</h3>
+                        <ul>
+                            <li>🍳 <strong>Cocina:</strong> Controla tiempos de cocción perfectos</li>
+                            <li>📚 <strong>Estudio:</strong> Técnica Pomodoro (25 min trabajo + 5 min descanso)</li>
+                            <li>🏃 <strong>Ejercicio:</strong> Intervalos HIIT, circuitos, descansos</li>
+                            <li>👨‍🏫 <strong>Clases:</strong> Gestionar tiempo de exámenes o presentaciones</li>
+                            <li>🎮 <strong>Gaming:</strong> Límites de tiempo de juego</li>
+                            <li>💼 <strong>Trabajo:</strong> Reuniones, pausas activas, productividad</li>
+                            <li>🧘 <strong>Meditación:</strong> Sesiones cronometradas</li>
+                        </ul>
+                    </div>
+
+                    <div class="info-card">
+                        <h3>⚙️ Configuración Disponible</h3>
+                        <ul>
+                            <li>4 sonidos de alarma diferentes (beep, campana, digital, suave)</li>
+                            <li>Control de volumen ajustable</li>
+                            <li>Modo oscuro/claro</li>
+                            <li>Pantalla completa para mejor visibilidad</li>
+                            <li>Notificaciones del navegador</li>
+                            <li>Repetición automática de temporizador</li>
+                        </ul>
+                    </div>
+
+                    <div class="info-card">
+                        <h3>⌨️ Atajos de Teclado</h3>
+                        <ul>
+                            <li><kbd>Espacio</kbd> - Iniciar/Pausar temporizador</li>
+                            <li><kbd>R</kbd> - Reiniciar temporizador</li>
+                            <li><kbd>F</kbd> - Alternar pantalla completa</li>
+                            <li><kbd>T</kbd> - Cambiar tema oscuro/claro</li>
+                        </ul>
+                    </div>
+
+                    <div class="info-card">
+                        <h3>💡 Ventajas de ChronoHub</h3>
+                        <ul>
+                            <li>✅ <strong>100% Gratis</strong> - Sin pagos, sin suscripciones</li>
+                            <li>✅ <strong>Sin registro</strong> - Úsalo inmediatamente</li>
+                            <li>✅ <strong>Sin anuncios</strong> - Interfaz limpia y sin distracciones</li>
+                            <li>✅ <strong>Privacidad total</strong> - Todo funciona en tu navegador</li>
+                            <li>✅ <strong>Responsive</strong> - Funciona en móvil, tablet y PC</li>
+                            <li>✅ <strong>Offline</strong> - Funciona sin conexión después de cargar</li>
+                            <li>✅ <strong>Multitarea</strong> - Abre múltiples pestañas para varios temporizadores</li>
+                        </ul>
+                    </div>
+
+                    <div class="info-card">
+                        <h3>❓ Preguntas Frecuentes</h3>
+                        <details>
+                            <summary>¿Funciona si minimizo el navegador?</summary>
+                            <p>Sí, todos los temporizadores y alarmas siguen funcionando en segundo plano. Recibirás notificaciones cuando terminen.</p>
+                        </details>
+                        <details>
+                            <summary>¿Se guardan mis configuraciones?</summary>
+                            <p>Sí, utilizamos almacenamiento local del navegador para guardar tus preferencias, alarmas configuradas y historial.</p>
+                        </details>
+                        <details>
+                            <summary>¿Puedo usar varios temporizadores a la vez?</summary>
+                            <p>Sí, abre ChronoHub en múltiples pestañas del navegador para tener varios temporizadores simultáneos.</p>
+                        </details>
+                        <details>
+                            <summary>¿Necesito instalar algo?</summary>
+                            <p>No, ChronoHub funciona 100% en tu navegador. Solo guarda la página en favoritos para acceso rápido.</p>
+                        </details>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <div class="footer-section">
+                <h4>Temporizadores</h4>
+                <ul>
+                    <li><button class="footer-link" data-tab="alarm">Alarma online</button></li>
+                    <li><button class="footer-link" data-tab="timer">Temporizador online</button></li>
+                    <li><button class="footer-link" data-tab="stopwatch">Cronómetro online</button></li>
+                    <li><button class="footer-link" data-tab="countdown">Cuenta atrás online</button></li>
+                </ul>
+            </div>
+            <div class="footer-section">
+                <h4>Relojes</h4>
+                <ul>
+                    <li><button class="footer-link" data-tab="clock">Reloj online</button></li>
+                    <li><button class="footer-link" data-tab="worldclock">Reloj mundial</button></li>
+                    <li><button class="footer-link" data-tab="week">Semana actual</button></li>
+                </ul>
+            </div>
+            <div class="footer-section">
+                <h4>Calculadoras</h4>
+                <ul>
+                    <li><button class="footer-link" data-tab="datecalc">Calculadora de fechas</button></li>
+                    <li><button class="footer-link" data-tab="timecalc">Calculadora de horas</button></li>
+                    <li><button class="footer-link" data-tab="age">Calculadora de edad</button></li>
+                </ul>
+            </div>
+            <div class="footer-section">
+                <h4>Información</h4>
+                <ul>
+                    <li><button class="footer-link" id="footerInfoBtn">Sobre ChronoHub</button></li>
+                    <li><a href="#" class="footer-link-a">Política de privacidad</a></li>
+                    <li><a href="#" class="footer-link-a">Términos de servicio</a></li>
+                    <li><a href="#" class="footer-link-a">Contacto</a></li>
+                </ul>
+            </div>
+        </div>
+        <div class="footer-bottom">
+            <p class="footer-brand">⏰ <strong>ChronoHub</strong></p>
+            <p class="footer-copy">© 2026 ChronoHub. Todos los derechos reservados.</p>
+            <p class="footer-tagline">Tu suite gratuita de herramientas de tiempo</p>
+        </div>
+    </footer>
+
+    <!-- Toast Notifications -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- Alarm Audio -->
+    <audio id="alarmAudio" preload="auto"></audio>
+
+    <script src="script.js?v=3"></script>
+</body>
+</html>
