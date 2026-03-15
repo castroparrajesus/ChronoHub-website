@@ -1,1207 +1,948 @@
-// ========== UTILITIES ==========
-// Format date to dd/mm/yyyy
-function formatDate(date) {
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const year = date.getFullYear();
-    return `${day}/${month}/${year}`;
+/* ════════════════════════════════════════════════════
+   UTILS
+════════════════════════════════════════════════════ */
+const p2 = (n) => String(n).padStart(2, '0');
+const p3 = (n) => String(n).padStart(3, '0');
+const $  = (id) => document.getElementById(id);
+
+function toast(msg, type = 'info', dur = 2800) {
+  const c = $('toasts');
+  const t = document.createElement('div');
+  t.className = `toast ${type}`;
+  const icon = { success: '✓', error: '✗', info: '◈' }[type] || '◈';
+  t.innerHTML = `<span style="font-size:.95rem">${icon}</span><span class="toast-msg">${msg}</span>`;
+  c.appendChild(t);
+  setTimeout(() => {
+    t.style.animation = 'toast-out .18s ease forwards';
+    setTimeout(() => t.remove(), 180);
+  }, dur);
 }
 
-// Toast Notifications
-function showToast(message, type = 'info', duration = 3000) {
-    const container = document.getElementById('toastContainer');
-    const toast = document.createElement('div');
-    toast.className = `toast ${type}`;
-    
-    const icons = {
-        success: '✓',
-        error: '✕',
-        info: 'ℹ️'
-    };
-    
-    toast.innerHTML = `
-        <span class="toast-icon">${icons[type] || icons.info}</span>
-        <span class="toast-message">${message}</span>
-    `;
-    
-    container.appendChild(toast);
-    
-    setTimeout(() => {
-        toast.style.animation = 'slideOut 0.3s ease';
-        setTimeout(() => toast.remove(), 300);
-    }, duration);
+// In-memory store (localStorage not available in all environments)
+const _store = {};
+function save(k, v) { try { _store[k] = JSON.stringify(v); localStorage.setItem(k, JSON.stringify(v)); } catch(e) { _store[k] = JSON.stringify(v); } }
+function load(k, def = null) {
+  try {
+    const v = _store[k] !== undefined ? _store[k] : localStorage.getItem(k);
+    return (v !== null && v !== undefined) ? JSON.parse(v) : def;
+  } catch(e) { return def; }
 }
 
-// Browser Notifications
-function requestNotificationPermission() {
-    if ('Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission().then(permission => {
-            if (permission === 'granted') {
-                showToast('Notificaciones activadas', 'success');
-            }
-        });
-    }
+// State declarations — must be before tickLive()
+let alarms = load('alarms', null) || [];
+let worldList = load('worldClocks', null) || ['America/New_York', 'Europe/London', 'Asia/Tokyo', 'America/Bogota'];
+
+function fmtHMS(s) {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  return h > 0 ? `${p2(h)}:${p2(m)}:${p2(ss)}` : `${p2(m)}:${p2(ss)}`;
 }
 
-function showBrowserNotification(title, body) {
-    if ('Notification' in window && Notification.permission === 'granted') {
-        const notification = new Notification(title, {
-            body: body,
-            icon: '⏰',
-            badge: '⏰',
-            requireInteraction: true
-        });
-        
-        notification.onclick = () => {
-            window.focus();
-            notification.close();
-        };
-    }
+function requestNotif() {
+  if ('Notification' in window && Notification.permission === 'default')
+    Notification.requestPermission();
 }
 
-// State Persistence
-function saveState(key, value) {
-    try {
-        localStorage.setItem(key, JSON.stringify(value));
-    } catch (e) {
-        console.error('Error saving state:', e);
-    }
+function notify(title, body) {
+  if ('Notification' in window && Notification.permission === 'granted') {
+    const n = new Notification(title, { body, requireInteraction: true });
+    n.onclick = () => { window.focus(); n.close(); };
+  }
 }
 
-function loadState(key, defaultValue = null) {
-    try {
-        const saved = localStorage.getItem(key);
-        return saved ? JSON.parse(saved) : defaultValue;
-    } catch (e) {
-        console.error('Error loading state:', e);
-        return defaultValue;
-    }
+/* ════════════════════════════════════════════════════
+   NAVIGATION
+════════════════════════════════════════════════════ */
+const PANEL_LABELS = {
+  timer: 'Temporizador', pomodoro: 'Pomodoro', stopwatch: 'Cronómetro',
+  alarm: 'Alarma', countdown: 'Cuenta Atrás', clock: 'Reloj',
+  world: 'Reloj Mundial', datecalc: 'Calc. Fechas', timecalc: 'Calc. Horas',
+  week: 'Semana', age: 'Calc. Edad'
+};
+
+function go(id) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-btn[data-panel], .bnav-btn[data-panel]').forEach(b => b.classList.remove('active'));
+  $(`panel-${id}`).classList.add('active');
+  document.querySelectorAll(`[data-panel="${id}"]`).forEach(b => b.classList.add('active'));
+  $('topbar-label').textContent = PANEL_LABELS[id] || id;
+  save('lastPanel', id);
+  if (id === 'clock') initClockTicks();
+  if (id === 'world') worldRender();
+  if (id === 'week')  weekRender();
 }
 
-// Save history to localStorage
-function saveHistory() {
-    const historyList = document.getElementById('historyList');
-    const historyItems = Array.from(historyList.children).map(item => item.textContent);
-    localStorage.setItem('history', JSON.stringify(historyItems));
+const lastPanel = load('lastPanel', 'timer');
+go(lastPanel);
+
+/* ════════════════════════════════════════════════════
+   LIVE CLOCK — topbar + clock panel
+════════════════════════════════════════════════════ */
+function tickLive() {
+  const now = new Date();
+  const hh = p2(now.getHours()), mm = p2(now.getMinutes()), ss = p2(now.getSeconds());
+
+  $('topbar-clock').textContent = `${hh}:${mm}:${ss}`;
+
+  $('clock-digital').textContent = `${hh}:${mm}:${ss}`;
+  const days   = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado'];
+  const months = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  $('clock-date-txt').textContent = `${days[now.getDay()]}, ${now.getDate()} de ${months[now.getMonth()]} de ${now.getFullYear()}`;
+  $('clock-tz-txt').textContent   = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  $('clock-secs-fill').style.width = (now.getSeconds() / 59 * 100) + '%';
+
+  worldTick(now);
+  checkAlarms(now);
 }
 
-// Load history from localStorage
-function loadHistory() {
-    const savedHistory = JSON.parse(localStorage.getItem('history')) || [];
-    const historyList = document.getElementById('historyList');
-    historyList.innerHTML = '';
-    savedHistory.forEach(itemText => {
-        const listItem = document.createElement('div');
-        listItem.textContent = itemText;
-        historyList.appendChild(listItem);
-    });
+setInterval(tickLive, 1000);
+tickLive();
+
+/* ════════════════════════════════════════════════════
+   ANALOG CLOCK
+════════════════════════════════════════════════════ */
+function initClockTicks() {
+  const g = $('clock-ticks');
+  if (g.children.length > 0) return;
+  for (let i = 0; i < 60; i++) {
+    const major = i % 5 === 0;
+    const rad = (i / 60) * 2 * Math.PI - Math.PI / 2;
+    const r1 = major ? 82 : 88, r2 = 95;
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', 100 + r1 * Math.cos(rad));
+    line.setAttribute('y1', 100 + r1 * Math.sin(rad));
+    line.setAttribute('x2', 100 + r2 * Math.cos(rad));
+    line.setAttribute('y2', 100 + r2 * Math.sin(rad));
+    line.setAttribute('class', major ? 'clock-tick-maj' : 'clock-tick');
+    line.setAttribute('stroke-width', major ? '2' : '1');
+    g.appendChild(line);
+  }
 }
 
-// Call loadHistory on page load
-window.addEventListener('DOMContentLoaded', loadHistory);
-
-// Example: Add to history and save
-function addToHistory(itemText) {
-    const historyList = document.getElementById('historyList');
-    const listItem = document.createElement('div');
-    listItem.textContent = itemText;
-    historyList.appendChild(listItem);
-    saveHistory();
+function setHand(id, deg, cx, cy, tipY) {
+  const el = $(id); if (!el) return;
+  const a = (deg - 90) * Math.PI / 180;
+  const len = cy - tipY;
+  el.setAttribute('x2', cx + len * Math.cos(a));
+  el.setAttribute('y2', cy + len * Math.sin(a));
 }
 
-// Generate shareable timer link
-function generateShareableLink(hours, minutes, seconds) {
-    const baseUrl = window.location.href.split('?')[0];
-    const params = new URLSearchParams();
-    params.set('hours', hours);
-    params.set('minutes', minutes);
-    params.set('seconds', seconds);
-    return `${baseUrl}?${params.toString()}`;
+function setHandWithTail(id, deg, cx, cy, tipY, tailY) {
+  const el = $(id); if (!el) return;
+  const a = (deg - 90) * Math.PI / 180;
+  const lenTip  = cy - tipY;
+  const lenTail = tailY - cy;
+  el.setAttribute('x1', cx - lenTail * Math.cos(a));
+  el.setAttribute('y1', cy - lenTail * Math.sin(a));
+  el.setAttribute('x2', cx + lenTip  * Math.cos(a));
+  el.setAttribute('y2', cy + lenTip  * Math.sin(a));
 }
 
-// Load timer from URL parameters
-function loadTimerFromURL() {
-    const params = new URLSearchParams(window.location.search);
-    const hours = params.get('hours') || 0;
-    const minutes = params.get('minutes') || 0;
-    const seconds = params.get('seconds') || 0;
-    document.getElementById('hours').value = hours;
-    document.getElementById('minutes').value = minutes;
-    document.getElementById('seconds').value = seconds;
+function tickAnalog() {
+  const now = new Date();
+  const s = now.getSeconds() + now.getMilliseconds() / 1000;
+  const m = now.getMinutes() + s / 60;
+  const h = (now.getHours() % 12) + m / 60;
+  setHand('hour-hand',        h / 12 * 360, 100, 100, 55);
+  setHand('min-hand',         m / 60 * 360, 100, 100, 25);
+  setHandWithTail('sec-hand', s / 60 * 360, 100, 100, 20, 115);
 }
 
-// ========== TAB NAVIGATION ==========
-const tabButtons = document.querySelectorAll('.tab-btn');
-const tabContents = document.querySelectorAll('.tab-content');
-const mobileTabsToggle = document.getElementById('mobileTabsToggle');
-const tabsList = document.getElementById('tabsList');
-const currentTabName = document.getElementById('currentTabName');
+setInterval(tickAnalog, 50);
+tickAnalog();
+initClockTicks();
 
-// Mobile tabs dropdown
-if (mobileTabsToggle) {
-    mobileTabsToggle.addEventListener('click', (e) => {
-        e.stopPropagation();
-        tabsList.classList.toggle('active');
-        mobileTabsToggle.classList.toggle('active');
-    });
+/* ════════════════════════════════════════════════════
+   TIMER
+════════════════════════════════════════════════════ */
+const TI = { total: 300, rem: 300, running: false, iv: null };
+
+function timerGetInput() {
+  return (parseInt($('t-h').value) || 0) * 3600
+       + (parseInt($('t-m').value) || 0) * 60
+       + (parseInt($('t-s').value) || 0);
 }
 
-document.addEventListener('click', (e) => {
-    if (!e.target.closest('.tabs')) {
-        tabsList.classList.remove('active');
-        if (mobileTabsToggle) mobileTabsToggle.classList.remove('active');
-    }
-});
-
-tabButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-        const tabName = btn.getAttribute('data-tab');
-        switchTab(tabName);
-        tabsList.classList.remove('active');
-        if (mobileTabsToggle) mobileTabsToggle.classList.remove('active');
-    });
-});
-
-function switchTab(tabName) {
-    tabButtons.forEach(btn => btn.classList.remove('active'));
-    tabContents.forEach(content => content.classList.remove('active'));
-    
-    const selectedBtn = document.querySelector(`[data-tab="${tabName}"]`);
-    selectedBtn.classList.add('active');
-    document.getElementById(`tab-${tabName}`).classList.add('active');
-    
-    if (currentTabName) currentTabName.textContent = selectedBtn.textContent;
-    
-    saveState('lastTab', tabName);
-    
-    if (tabName === 'clock') updateClock();
-    if (tabName === 'worldclock') updateWorldClocks();
-    if (tabName === 'week') updateWeekInfo();
+function timerSetInput(s) {
+  $('t-h').value = Math.floor(s / 3600);
+  $('t-m').value = Math.floor((s % 3600) / 60);
+  $('t-s').value = s % 60;
 }
 
-// Load last tab
-const lastTab = loadState('lastTab', 'timer');
-switchTab(lastTab);
-
-// Info Section Toggle
-const infoToggle = document.getElementById('infoToggle');
-const infoContent = document.getElementById('infoContent');
-
-if (infoToggle) {
-    infoToggle.addEventListener('click', () => {
-        const isVisible = infoContent.style.display !== 'none';
-        infoContent.style.display = isVisible ? 'none' : 'block';
-        infoToggle.textContent = isVisible ? '📖 Información y Ayuda' : '✕ Cerrar Información';
-    });
+function timerUpdateRing() {
+  const pct  = TI.total > 0 ? Math.max(0, TI.rem / TI.total) : 1;
+  const circ = 2 * Math.PI * 120;
+  $('ring-fill').style.strokeDashoffset = (1 - pct) * circ;
+  $('ring-time').textContent = fmtHMS(Math.max(0, TI.rem));
 }
 
-// Footer links
-document.querySelectorAll('.footer-link').forEach(link => {
-    link.addEventListener('click', () => {
-        const tab = link.getAttribute('data-tab');
-        if (tab) {
-            switchTab(tab);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-    });
-});
-
-const footerInfoBtn = document.getElementById('footerInfoBtn');
-if (footerInfoBtn) {
-    footerInfoBtn.addEventListener('click', () => {
-        infoContent.style.display = 'block';
-        infoToggle.textContent = '✕ Cerrar Información';
-        document.getElementById('infoSection').scrollIntoView({ behavior: 'smooth' });
-    });
+function timerPreset(s) {
+  clearInterval(TI.iv); TI.running = false;
+  TI.total = s; TI.rem = s;
+  timerSetInput(s);
+  $('timer-btn-start').style.display = ''; $('timer-btn-start').textContent = '▶ Iniciar';
+  $('timer-btn-pause').style.display = 'none';
+  $('ring-fill').className = 'ring-fill';
+  $('ring-time').className = 'ring-time';
+  $('ring-status').textContent = 'LISTO';
+  $('t-h').disabled = $('t-m').disabled = $('t-s').disabled = false;
+  timerUpdateRing();
 }
 
-// Initialize notifications
-requestNotificationPermission();
-
-// ========== THEME & FULLSCREEN ==========
-const themeToggle = document.getElementById('themeToggle');
-const fullscreenBtn = document.getElementById('fullscreenBtn');
-
-themeToggle.addEventListener('click', () => {
-    document.body.classList.toggle('dark-theme');
-    const isDark = document.body.classList.contains('dark-theme');
-    localStorage.setItem('theme', isDark ? 'dark' : 'light');
-});
-
-// Apply saved theme on load
-window.addEventListener('DOMContentLoaded', () => {
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme === 'dark') {
-        document.body.classList.add('dark-theme');
-    }
-});
-
-function loadTheme() {
-    const savedTheme = loadState('theme', 'light');
-    document.body.setAttribute('data-theme', savedTheme);
+function timerStart() {
+  if (!TI.running) {
+    const inp = timerGetInput();
+    if (TI.rem <= 0 && inp <= 0) { toast('Establece un tiempo mayor a 0', 'error'); return; }
+    if (TI.rem <= 0) { TI.total = inp; TI.rem = inp; }
+    if (TI.total <= 0) TI.total = TI.rem;
+  }
+  TI.running = true;
+  $('timer-btn-start').style.display = 'none';
+  $('timer-btn-pause').style.display = '';
+  $('ring-fill').classList.add('running');
+  $('ring-time').classList.add('running');
+  $('ring-status').textContent = 'CORRIENDO';
+  $('t-h').disabled = $('t-m').disabled = $('t-s').disabled = true;
+  clearInterval(TI.iv);
+  TI.iv = setInterval(() => {
+    TI.rem--;
+    timerUpdateRing();
+    document.title = `⏱ ${fmtHMS(TI.rem)} — ChronoHub`;
+    if (TI.rem <= 0) timerFinish();
+  }, 1000);
+  toast('Temporizador iniciado', 'success');
 }
 
-fullscreenBtn.addEventListener('click', () => {
-    if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen();
-        showToast('Modo pantalla completa activado', 'info', 2000);
+function timerPause() {
+  TI.running = false; clearInterval(TI.iv);
+  $('timer-btn-start').style.display = ''; $('timer-btn-start').textContent = '▶ Reanudar';
+  $('timer-btn-pause').style.display = 'none';
+  $('ring-fill').classList.remove('running');
+  $('ring-time').classList.remove('running');
+  $('ring-status').textContent = 'PAUSADO';
+  toast('Pausado', 'info', 2000);
+}
+
+function timerReset() {
+  clearInterval(TI.iv); TI.running = false;
+  const inp = timerGetInput();
+  TI.total = inp > 0 ? inp : 300;
+  TI.rem = TI.total;
+  $('timer-btn-start').style.display = ''; $('timer-btn-start').textContent = '▶ Iniciar';
+  $('timer-btn-pause').style.display = 'none';
+  $('ring-fill').className  = 'ring-fill';
+  $('ring-time').className  = 'ring-time';
+  $('ring-status').textContent = 'LISTO';
+  $('t-h').disabled = $('t-m').disabled = $('t-s').disabled = false;
+  timerUpdateRing();
+  document.title = 'ChronoHub';
+}
+
+function timerFinish() {
+  clearInterval(TI.iv); TI.running = false;
+  $('ring-fill').className = 'ring-fill done';
+  $('ring-time').className = 'ring-time done';
+  $('ring-status').textContent = '¡TIEMPO!';
+  $('timer-btn-start').style.display = ''; $('timer-btn-start').textContent = '▶ Iniciar';
+  $('timer-btn-pause').style.display = 'none';
+  $('t-h').disabled = $('t-m').disabled = $('t-s').disabled = false;
+  beep();
+  notify('⏰ ¡Tiempo terminado!', 'Tu temporizador ha finalizado.');
+  toast('¡Temporizador completado!', 'success', 4000);
+  timerAddHistory();
+  document.title = 'ChronoHub';
+  if ($('t-auto').checked) {
+    setTimeout(() => { TI.rem = TI.total; timerUpdateRing(); timerStart(); }, 2000);
+  }
+}
+
+function timerAddHistory() {
+  const h = load('timerHistory', []);
+  h.unshift({
+    t: fmtHMS(TI.total),
+    d: new Date().toLocaleString('es-ES', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  });
+  if (h.length > 10) h.pop();
+  save('timerHistory', h);
+  renderTimerHistory();
+}
+
+function renderTimerHistory() {
+  const h  = load('timerHistory', []);
+  const el = $('timer-history');
+  if (!h.length) { el.innerHTML = '<div class="hist-empty">Sin historial aún</div>'; return; }
+  el.innerHTML = h.map(x =>
+    `<div class="hist-item"><span class="hist-t">${x.t}</span><span class="hist-d">${x.d}</span></div>`
+  ).join('');
+}
+
+function saveTimerSettings() {
+  save('timerSettings', {
+    sound: $('t-sound').value,
+    vol:   $('t-vol').value,
+    auto:  $('t-auto').checked,
+    notif: $('t-notif').checked
+  });
+}
+
+function loadTimerSettings() {
+  const s = load('timerSettings');
+  if (!s) return;
+  $('t-sound').value  = s.sound || 'beep';
+  $('t-vol').value    = s.vol   || 70;
+  $('t-vol-val').textContent = (s.vol || 70) + '%';
+  $('t-auto').checked  = !!s.auto;
+  $('t-notif').checked = s.notif !== false;
+}
+
+loadTimerSettings();
+renderTimerHistory();
+timerUpdateRing();
+
+/* ════════════════════════════════════════════════════
+   POMODORO
+════════════════════════════════════════════════════ */
+const POMO = {
+  mode: 'work', running: false, iv: null,
+  rem: 25 * 60, total: 25 * 60, cycle: 1,
+  cfg: { work: 25, short: 5, long: 15, cycles: 4 }
+};
+
+function pomoGetTotal(mode) {
+  const key = mode === 'work' ? 'work' : mode === 'short' ? 'short' : 'long';
+  return POMO.cfg[key] * 60;
+}
+
+function pomoMode(m, el) {
+  if (POMO.running) pomoPause();
+  POMO.mode  = m;
+  POMO.total = pomoGetTotal(m);
+  POMO.rem   = POMO.total;
+  document.querySelectorAll('.pomo-mode').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  pomoUpdateRing();
+  $('pomo-status').textContent = { work: 'TRABAJO', short: 'PAUSA CORTA', long: 'PAUSA LARGA' }[m];
+  const colors = { work: 'var(--o)', short: 'var(--g)', long: 'var(--c)' };
+  $('pomo-ring-fill').style.stroke = colors[m];
+}
+
+function pomoUpdateRing() {
+  const pct  = POMO.total > 0 ? (POMO.rem / POMO.total) : 1;
+  const circ = 2 * Math.PI * 110;
+  $('pomo-ring-fill').style.strokeDashoffset = (1 - pct) * circ;
+  $('pomo-time').textContent = fmtHMS(POMO.rem);
+}
+
+function pomoStart() {
+  if (POMO.rem <= 0) { POMO.rem = POMO.total; pomoUpdateRing(); }
+  POMO.running = true;
+  $('pomo-btn-start').style.display = 'none';
+  $('pomo-btn-pause').style.display = '';
+  $('pomo-status').textContent = 'CORRIENDO';
+  clearInterval(POMO.iv);
+  POMO.iv = setInterval(() => {
+    POMO.rem--;
+    pomoUpdateRing();
+    document.title = `🍅 ${fmtHMS(POMO.rem)} — Pomodoro`;
+    if (POMO.rem <= 0) pomoFinish();
+  }, 1000);
+}
+
+function pomoPause() {
+  POMO.running = false; clearInterval(POMO.iv);
+  $('pomo-btn-start').style.display = ''; $('pomo-btn-start').textContent = '▶ Continuar';
+  $('pomo-btn-pause').style.display = 'none';
+  $('pomo-status').textContent = 'PAUSADO';
+}
+
+function pomoReset() {
+  clearInterval(POMO.iv); POMO.running = false;
+  POMO.rem = POMO.total;
+  $('pomo-btn-start').style.display = ''; $('pomo-btn-start').textContent = '▶ Iniciar';
+  $('pomo-btn-pause').style.display = 'none';
+  $('pomo-status').textContent = 'LISTO';
+  pomoUpdateRing();
+  document.title = 'ChronoHub';
+}
+
+function pomoSkip() { clearInterval(POMO.iv); POMO.rem = 0; pomoFinish(); }
+
+function pomoFinish() {
+  clearInterval(POMO.iv); POMO.running = false;
+  beep();
+  const wasWork = POMO.mode === 'work';
+  $('pomo-btn-start').style.display = ''; $('pomo-btn-start').textContent = '▶ Iniciar';
+  $('pomo-btn-pause').style.display = 'none';
+  document.title = 'ChronoHub';
+  if (wasWork) {
+    toast(`🍅 Pomodoro ${POMO.cycle} completado!`, 'success', 4000);
+    notify('🍅 Pomodoro completo', '¡Hora de descansar!');
+    pomoUpdateDots();
+    if (POMO.cycle >= POMO.cfg.cycles) {
+      POMO.cycle = 1;
+      setTimeout(() => { document.querySelectorAll('.pomo-mode')[2].click(); }, 500);
     } else {
-        document.exitFullscreen();
+      POMO.cycle++; $('pomo-cycle-num').textContent = POMO.cycle;
+      setTimeout(() => { document.querySelectorAll('.pomo-mode')[1].click(); }, 500);
     }
-});
-
-loadTheme();
-
-// ========== TIMER ==========
-let timerInterval = null;
-let totalSeconds = 300;
-let remainingSeconds = totalSeconds;
-let isRunning = false;
-
-const hoursInput = document.getElementById('hours');
-const minutesInput = document.getElementById('minutes');
-const secondsInput = document.getElementById('seconds');
-const timerDisplay = document.getElementById('timerDisplay');
-const startBtn = document.getElementById('startBtn');
-const pauseBtn = document.getElementById('pauseBtn');
-const resetBtn = document.getElementById('resetBtn');
-const presetButtons = document.querySelectorAll('.preset-btn');
-const progressCircle = document.querySelector('.progress-ring-circle');
-const volumeSlider = document.getElementById('volume');
-const volumeValue = document.getElementById('volumeValue');
-const alarmSound = document.getElementById('alarmSound');
-const notificationsCheckbox = document.getElementById('notifications');
-const autoRepeatCheckbox = document.getElementById('autoRepeat');
-const historyList = document.getElementById('historyList');
-
-createSVGGradient();
-loadTimerState();
-loadSettings();
-loadHistory();
-updateDisplay();
-updateProgressRing(100);
-
-function loadTimerState() {
-    const state = loadState('timerState');
-    if (state) {
-        totalSeconds = state.totalSeconds || 300;
-        remainingSeconds = state.remainingSeconds || totalSeconds;
-        
-        const hours = Math.floor(totalSeconds / 3600);
-        const minutes = Math.floor((totalSeconds % 3600) / 60);
-        const secs = totalSeconds % 60;
-        
-        hoursInput.value = hours;
-        minutesInput.value = minutes;
-        secondsInput.value = secs;
-    }
+  } else {
+    toast('Pausa terminada. ¡A trabajar!', 'info', 3000);
+    setTimeout(() => { document.querySelectorAll('.pomo-mode')[0].click(); }, 500);
+  }
 }
 
-function saveTimerState() {
-    saveState('timerState', {
-        totalSeconds,
-        remainingSeconds
-    });
+function pomoBuildDots() {
+  const d = $('pomo-dots'); d.innerHTML = '';
+  for (let i = 0; i < POMO.cfg.cycles; i++) {
+    const dot = document.createElement('div');
+    dot.className = 'pomo-dot'; dot.id = `pd-${i}`;
+    d.appendChild(dot);
+  }
+  $('pomo-cycle-total').textContent = POMO.cfg.cycles;
+  pomoUpdateDots();
 }
 
-function createSVGGradient() {
-    const svg = document.querySelector('.progress-ring-svg');
-    if (!svg || svg.querySelector('#gradient')) return;
-    
-    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-    const gradient = document.createElementNS('http://www.w3.org/2000/svg', 'linearGradient');
-    gradient.setAttribute('id', 'gradient');
-    gradient.setAttribute('x1', '0%');
-    gradient.setAttribute('y1', '0%');
-    gradient.setAttribute('x2', '100%');
-    gradient.setAttribute('y2', '100%');
-    
-    const stop1 = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
-    stop1.setAttribute('offset', '0%');
-    stop1.setAttribute('stop-color', '#6366f1');
-    
-    const stop2 = document.createElementNS('http://www.w3.org/2000/svg', 'stop');
-    stop2.setAttribute('offset', '100%');
-    stop2.setAttribute('stop-color', '#8b5cf6');
-    
-    gradient.appendChild(stop1);
-    gradient.appendChild(stop2);
-    defs.appendChild(gradient);
-    svg.insertBefore(defs, svg.firstChild);
+function pomoUpdateDots() {
+  document.querySelectorAll('.pomo-dot').forEach((d, i) => {
+    d.classList.remove('done', 'current');
+    if (i < POMO.cycle - 1) d.classList.add('done');
+    if (i === POMO.cycle - 1) d.classList.add('current');
+  });
 }
 
-hoursInput.addEventListener('change', handleTimeInputChange);
-minutesInput.addEventListener('change', handleTimeInputChange);
-secondsInput.addEventListener('change', handleTimeInputChange);
-
-function handleTimeInputChange() {
-    if (isRunning) return;
-    
-    hoursInput.value = Math.max(0, Math.min(23, parseInt(hoursInput.value) || 0));
-    minutesInput.value = Math.max(0, Math.min(59, parseInt(minutesInput.value) || 0));
-    secondsInput.value = Math.max(0, Math.min(59, parseInt(secondsInput.value) || 0));
-    
-    totalSeconds = (parseInt(hoursInput.value) * 3600) + 
-                   (parseInt(minutesInput.value) * 60) + 
-                   parseInt(secondsInput.value);
-    
-    remainingSeconds = totalSeconds;
-    updateDisplay();
-    updateProgressRing(100);
-    saveTimerState();
+function pomoAdj(k, delta) {
+  const min = { work: 1, short: 1, long: 1, cycles: 1 }[k];
+  const max = { work: 60, short: 30, long: 60, cycles: 8 }[k];
+  POMO.cfg[k] = Math.max(min, Math.min(max, POMO.cfg[k] + delta));
+  $(`ps-${k}`).textContent = POMO.cfg[k];
+  if (!POMO.running) {
+    if (k !== 'cycles') { POMO.total = pomoGetTotal(POMO.mode); POMO.rem = POMO.total; pomoUpdateRing(); }
+    else pomoBuildDots();
+  }
+  save('pomoCfg', POMO.cfg);
 }
 
-presetButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-        if (isRunning) return;
-        const seconds = parseInt(btn.getAttribute('data-time'));
-        setTime(seconds);
-    });
-});
+const savedPomoCfg = load('pomoCfg');
+if (savedPomoCfg) {
+  POMO.cfg = savedPomoCfg;
+  ['work', 'short', 'long', 'cycles'].forEach(k => { if ($(`ps-${k}`)) $(`ps-${k}`).textContent = POMO.cfg[k]; });
+}
+pomoBuildDots();
+pomoUpdateRing();
 
-function setTime(seconds) {
-    totalSeconds = seconds;
-    remainingSeconds = seconds;
-    
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    
-    hoursInput.value = hours;
-    minutesInput.value = minutes;
-    secondsInput.value = secs;
-    
-    updateDisplay();
-    updateProgressRing(100);
-    saveTimerState();
+/* ════════════════════════════════════════════════════
+   STOPWATCH
+════════════════════════════════════════════════════ */
+const SW = { running: false, iv: null, elapsed: 0, start: 0, laps: [] };
+
+function swFmt(ms) {
+  const h  = Math.floor(ms / 3600000);
+  const m  = Math.floor((ms % 3600000) / 60000);
+  const s  = Math.floor((ms % 60000) / 1000);
+  const cs = ms % 1000;
+  return (h > 0 ? `${p2(h)}:` : '') + (h > 0 ? p2(m) : m) + `:${p2(s)}<span class="ms">.${p3(cs)}</span>`;
 }
 
-startBtn.addEventListener('click', startTimer);
-pauseBtn.addEventListener('click', pauseTimer);
-resetBtn.addEventListener('click', resetTimer);
-
-function startTimer() {
-    if (totalSeconds === 0) {
-        showToast('Por favor, establece un tiempo mayor a 0', 'error');
-        return;
-    }
-    
-    isRunning = true;
-    startBtn.style.display = 'none';
-    pauseBtn.style.display = 'block';
-    
-    hoursInput.disabled = true;
-    minutesInput.disabled = true;
-    secondsInput.disabled = true;
-    
-    timerDisplay.classList.add('running');
-    showToast('Temporizador iniciado', 'success', 2000);
-    
-    timerInterval = setInterval(() => {
-        remainingSeconds--;
-        updateDisplay();
-        
-        const progress = (remainingSeconds / totalSeconds) * 100;
-        updateProgressRing(progress);
-        
-        if (remainingSeconds <= 0) {
-            timerFinished();
-        }
-    }, 1000);
+function swStart() {
+  SW.start   = Date.now() - SW.elapsed;
+  SW.running = true;
+  $('sw-btn-start').style.display = 'none';
+  $('sw-btn-pause').style.display = '';
+  clearInterval(SW.iv);
+  SW.iv = setInterval(() => {
+    SW.elapsed = Date.now() - SW.start;
+    $('sw-display').innerHTML = swFmt(SW.elapsed);
+  }, 30);
 }
 
-function pauseTimer() {
-    isRunning = false;
-    clearInterval(timerInterval);
-    
-    startBtn.style.display = 'block';
-    pauseBtn.style.display = 'none';
-    startBtn.textContent = '▶ Reanudar';
-    
-    timerDisplay.classList.remove('running');
-    showToast('Temporizador pausado', 'info', 2000);
+function swPause() {
+  clearInterval(SW.iv); SW.running = false;
+  $('sw-btn-start').style.display = ''; $('sw-btn-start').textContent = '▶ Continuar';
+  $('sw-btn-pause').style.display = 'none';
 }
 
-function resetTimer() {
-    clearInterval(timerInterval);
-    isRunning = false;
-    remainingSeconds = totalSeconds;
-    
-    startBtn.style.display = 'block';
-    pauseBtn.style.display = 'none';
-    startBtn.textContent = '▶ Iniciar';
-    
-    hoursInput.disabled = false;
-    minutesInput.disabled = false;
-    secondsInput.disabled = false;
-    
-    timerDisplay.classList.remove('running', 'finished');
-    
-    updateDisplay();
-    updateProgressRing(100);
-    showToast('Temporizador reiniciado', 'success', 2000);
+function swLap() {
+  if (!SW.running) return;
+  SW.laps.unshift({ total: SW.elapsed, num: SW.laps.length + 1 });
+  $('sw-lap-count').textContent = SW.laps.length;
+  renderLaps();
 }
 
-function timerFinished() {
-    clearInterval(timerInterval);
-    isRunning = false;
-    
-    timerDisplay.classList.remove('running');
-    timerDisplay.classList.add('finished');
-    
-    playAlarm();
-    showBrowserNotification('⏰ ¡Tiempo terminado!', 'Tu temporizador ha finalizado.');
-    showToast('¡Temporizador finalizado!', 'success');
-    addToHistory();
-    
-    startBtn.style.display = 'block';
-    pauseBtn.style.display = 'none';
-    startBtn.textContent = '▶ Iniciar';
-    
-    hoursInput.disabled = false;
-    minutesInput.disabled = false;
-    secondsInput.disabled = false;
-    
-    if (autoRepeatCheckbox.checked) {
-        setTimeout(() => {
-            resetTimer();
-            startTimer();
-        }, 3000);
-    }
-}
-
-function updateDisplay() {
-    const hours = Math.floor(remainingSeconds / 3600);
-    const minutes = Math.floor((remainingSeconds % 3600) / 60);
-    const seconds = remainingSeconds % 60;
-    
-    let displayText = '';
-    
-    if (hours > 0) {
-        displayText = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-    } else {
-        displayText = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-    }
-    
-    timerDisplay.textContent = displayText;
-    document.title = isRunning ? `⏱️ ${displayText} - ChronoHub` : 'ChronoHub - Herramientas de Tiempo';
-}
-
-function updateProgressRing(percentage) {
-    const radius = 135;
-    const circumference = 2 * Math.PI * radius;
-    const offset = circumference - (percentage / 100 * circumference);
-    progressCircle.style.strokeDashoffset = offset;
-}
-
-function playAlarm() {
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    const volume = (volumeSlider.value / 100) * 0.3;
-    
-    for (let i = 0; i < 3; i++) {
-        setTimeout(() => {
-            const oscillator = audioContext.createOscillator();
-            const gainNode = audioContext.createGain();
-            
-            oscillator.connect(gainNode);
-            gainNode.connect(audioContext.destination);
-            
-            oscillator.frequency.value = 800;
-            gainNode.gain.value = volume;
-            
-            oscillator.start(audioContext.currentTime);
-            oscillator.stop(audioContext.currentTime + 0.3);
-        }, i * 400);
-    }
-}
-
-// Volume Control
-volumeSlider.addEventListener('input', () => {
-    volumeValue.textContent = `${volumeSlider.value}%`;
-    saveSettings();
-});
-
-// Settings
-function saveSettings() {
-    const settings = {
-        alarmSound: alarmSound.value,
-        volume: volumeSlider.value,
-        notifications: notificationsCheckbox.checked,
-        autoRepeat: autoRepeatCheckbox.checked
-    };
-    saveState('timerSettings', settings);
-}
-
-function loadSettings() {
-    const settings = loadState('timerSettings');
-    if (settings) {
-        alarmSound.value = settings.alarmSound || 'beep';
-        volumeSlider.value = settings.volume || 70;
-        volumeValue.textContent = `${volumeSlider.value}%`;
-        notificationsCheckbox.checked = settings.notifications !== false;
-        autoRepeatCheckbox.checked = settings.autoRepeat || false;
-    }
-}
-
-alarmSound.addEventListener('change', saveSettings);
-notificationsCheckbox.addEventListener('change', saveSettings);
-autoRepeatCheckbox.addEventListener('change', saveSettings);
-
-// History
-function addToHistory() {
-    const history = loadState('timerHistory', []);
-    const entry = {
-        time: formatTime(totalSeconds),
-        date: new Date().toLocaleString('es-ES', {
-            year: 'numeric',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-        }),
-        timestamp: Date.now()
-    };
-    
-    history.unshift(entry);
-    
-    if (history.length > 10) {
-        history.pop();
-    }
-    
-    saveState('timerHistory', history);
-    loadHistory();
-}
-
-function loadHistory() {
-    const history = loadState('timerHistory', []);
-    
-    if (history.length === 0) {
-        historyList.innerHTML = '<div class="history-empty">No hay historial aún</div>';
-        return;
-    }
-    
-    historyList.innerHTML = history.map(entry => `
-        <div class="history-item">
-            <span class="history-item-time">${entry.time}</span>
-            <span class="history-item-date">${entry.date}</span>
-        </div>
-    `).join('');
-}
-
-function formatTime(seconds) {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    
-    if (hours > 0) {
-        return `${hours}h ${minutes}m ${secs}s`;
-    } else if (minutes > 0) {
-        return `${minutes}m ${secs}s`;
-    } else {
-        return `${secs}s`;
-    }
-}
-
-// ========== ALARM ==========
-const alarmTime = document.getElementById('alarmTime');
-const setAlarmBtn = document.getElementById('setAlarm');
-const cancelAlarmBtn = document.getElementById('cancelAlarm');
-const alarmsList = document.getElementById('alarmsList');
-let alarms = [];
-
-loadAlarms();
-
-setAlarmBtn.addEventListener('click', () => {
-    if (!alarmTime.value) {
-        showToast('Por favor, selecciona una hora', 'error');
-        return;
-    }
-    
-    const alarm = {
-        id: Date.now(),
-        time: alarmTime.value
-    };
-    
-    alarms.push(alarm);
-    saveAlarms();
-    renderAlarms();
-    alarmTime.value = '';
-    showToast('Alarma configurada correctamente', 'success');
-});
-
-cancelAlarmBtn.addEventListener('click', () => {
-    alarms = [];
-    saveAlarms();
-    renderAlarms();
-    showToast('Todas las alarmas canceladas', 'info');
-});
-
-function renderAlarms() {
-    if (alarms.length === 0) {
-        alarmsList.innerHTML = '<p style="text-align:center;color:var(--text-secondary)">No hay alarmas configuradas</p>';
-        return;
-    }
-    
-    alarmsList.innerHTML = alarms.map(alarm => `
-        <div class="alarm-item">
-            <div class="alarm-time-display">${alarm.time}</div>
-            <button class="alarm-delete" onclick="deleteAlarm(${alarm.id})">Eliminar</button>
-        </div>
-    `).join('');
-}
-
-function deleteAlarm(id) {
-    alarms = alarms.filter(a => a.id !== id);
-    saveAlarms();
-    renderAlarms();
-    showToast('Alarma eliminada', 'success', 2000);
-}
-
-function saveAlarms() {
-    saveState('alarms', alarms);
-}
-
-function loadAlarms() {
-    alarms = loadState('alarms', []);
-    renderAlarms();
-}
-
-setInterval(() => {
-    const now = new Date();
-    const currentTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-    
-    alarms.forEach(alarm => {
-        if (alarm.time === currentTime && !alarm.triggered) {
-            alarm.triggered = true;
-            playAlarm();
-            showBrowserNotification('⏰ Alarma', `Es hora: ${alarm.time}`);
-            showToast(`⏰ ¡Alarma! ${alarm.time}`, 'success');
-            setTimeout(() => alarm.triggered = false, 60000);
-        }
-    });
-}, 1000);
-
-// ========== COUNTDOWN ==========
-const countdownDate = document.getElementById('countdownDate');
-const countdownTime = document.getElementById('countdownTime');
-const countdownName = document.getElementById('countdownName');
-const setCountdownBtn = document.getElementById('setCountdown');
-const cdDays = document.getElementById('cdDays');
-const cdHours = document.getElementById('cdHours');
-const cdMinutes = document.getElementById('cdMinutes');
-const cdSeconds = document.getElementById('cdSeconds');
-const countdownEventName = document.getElementById('countdownEventName');
-
-let countdownInterval = null;
-let targetDate = null;
-
-setCountdownBtn.addEventListener('click', () => {
-    if (!countdownDate.value) {
-        showToast('Por favor, selecciona una fecha', 'error');
-        return;
-    }
-    
-    const dateStr = countdownDate.value + (countdownTime.value ? 'T' + countdownTime.value : 'T00:00');
-    targetDate = new Date(dateStr);
-    
-    if (targetDate < new Date()) {
-        showToast('La fecha debe ser futura', 'error');
-        return;
-    }
-    
-    const eventName = countdownName.value || 'Cuenta atrás';
-    const dateDisplay = formatDate(targetDate);
-    const timeDisplay = countdownTime.value ? countdownTime.value : '00:00';
-    
-    countdownEventName.textContent = `${eventName} • ${dateDisplay} ${timeDisplay}`;
-    
-    if (countdownInterval) clearInterval(countdownInterval);
-    
-    countdownInterval = setInterval(updateCountdown, 1000);
-    updateCountdown();
-    showToast('Cuenta atrás configurada', 'success');
-});
-
-function updateCountdown() {
-    if (!targetDate) return;
-    
-    const now = new Date();
-    const diff = targetDate - now;
-    
-    if (diff <= 0) {
-        clearInterval(countdownInterval);
-        cdDays.textContent = '0';
-        cdHours.textContent = '0';
-        cdMinutes.textContent = '0';
-        cdSeconds.textContent = '0';
-        playAlarm();
-        showBrowserNotification('⏳ ¡Cuenta atrás terminada!', countdownEventName.textContent);
-        showToast('¡Cuenta atrás finalizada!', 'success');
-        return;
-    }
-    
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-    const seconds = Math.floor((diff % (1000 * 60)) / 1000);
-    
-    cdDays.textContent = days;
-    cdHours.textContent = hours;
-    cdMinutes.textContent = minutes;
-    cdSeconds.textContent = seconds;
-}
-
-// ========== STOPWATCH ==========
-const stopwatchDisplay = document.getElementById('stopwatchDisplay');
-const startStopwatch = document.getElementById('startStopwatch');
-const pauseStopwatch = document.getElementById('pauseStopwatch');
-const resetStopwatch = document.getElementById('resetStopwatch');
-const lapStopwatch = document.getElementById('lapStopwatch');
-const lapsList = document.getElementById('lapsList');
-
-let stopwatchInterval = null;
-let stopwatchTime = 0;
-let laps = [];
-
-startStopwatch.addEventListener('click', () => {
-    startStopwatch.style.display = 'none';
-    pauseStopwatch.style.display = 'block';
-    
-    const startTime = Date.now() - stopwatchTime;
-    stopwatchInterval = setInterval(() => {
-        stopwatchTime = Date.now() - startTime;
-        updateStopwatchDisplay();
-    }, 10);
-    
-    showToast('Cronómetro iniciado', 'success', 2000);
-});
-
-pauseStopwatch.addEventListener('click', () => {
-    clearInterval(stopwatchInterval);
-    startStopwatch.style.display = 'block';
-    pauseStopwatch.style.display = 'none';
-    startStopwatch.textContent = '▶ Continuar';
-    showToast('Cronómetro pausado', 'info', 2000);
-});
-
-resetStopwatch.addEventListener('click', () => {
-    clearInterval(stopwatchInterval);
-    stopwatchTime = 0;
-    laps = [];
-    updateStopwatchDisplay();
-    lapsList.innerHTML = '';
-    startStopwatch.style.display = 'block';
-    pauseStopwatch.style.display = 'none';
-    startStopwatch.textContent = '▶ Iniciar';
-    showToast('Cronómetro reiniciado', 'success', 2000);
-});
-
-lapStopwatch.addEventListener('click', () => {
-    if (stopwatchTime === 0) return;
-    laps.push(stopwatchTime);
-    renderLaps();
-    showToast(`Vuelta ${laps.length} registrada`, 'success', 1500);
-});
-
-function updateStopwatchDisplay() {
-    const hours = Math.floor(stopwatchTime / 3600000);
-    const minutes = Math.floor((stopwatchTime % 3600000) / 60000);
-    const seconds = Math.floor((stopwatchTime % 60000) / 1000);
-    const milliseconds = stopwatchTime % 1000;
-    
-    stopwatchDisplay.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
+function swReset() {
+  clearInterval(SW.iv); SW.running = false; SW.elapsed = 0; SW.laps = [];
+  $('sw-display').innerHTML = '00:00<span class="ms">.000</span>';
+  $('sw-btn-start').style.display = ''; $('sw-btn-start').textContent = '▶ Iniciar';
+  $('sw-btn-pause').style.display = 'none';
+  $('sw-lap-count').textContent = '0';
+  $('sw-laps').innerHTML = '';
 }
 
 function renderLaps() {
-    lapsList.innerHTML = laps.map((lap, index) => {
-        const hours = Math.floor(lap / 3600000);
-        const minutes = Math.floor((lap % 3600000) / 60000);
-        const seconds = Math.floor((lap % 60000) / 1000);
-        const milliseconds = lap % 1000;
-        const timeStr = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(3, '0')}`;
-        
-        return `
-            <div class="lap-item">
-                <span class="lap-number">Vuelta ${laps.length - index}</span>
-                <span class="lap-time">${timeStr}</span>
-            </div>
-        `;
-    }).reverse().join('');
+  const times = SW.laps.map((l, i) =>
+    i < SW.laps.length - 1 ? l.total - SW.laps[i + 1].total : l.total
+  );
+  const best = Math.min(...times), worst = Math.max(...times);
+  $('sw-laps').innerHTML = SW.laps.map((l, i) => {
+    const split = times[i];
+    const cls = times.length > 1
+      ? (split === best ? 'lap-best' : split === worst ? 'lap-worst' : '')
+      : '';
+    return `<div class="lap-row ${cls}">
+      <div class="lap-num">Vuelta ${SW.laps.length - i}</div>
+      <div class="lap-time">${swFmt(split).replace(/<[^>]+>/g, '')}</div>
+    </div>`;
+  }).join('');
 }
 
-// ========== CLOCK ==========
-const digitalClock = document.getElementById('digitalClock');
-const clockDate = document.getElementById('clockDate');
-const hourHand = document.getElementById('hourHand');
-const minuteHand = document.getElementById('minuteHand');
-const secondHand = document.getElementById('secondHand');
+/* ════════════════════════════════════════════════════
+   ALARM
+════════════════════════════════════════════════════ */
 
-function updateClock() {
-    const now = new Date();
-    
-    const hours = now.getHours().toString().padStart(2, '0');
-    const minutes = now.getMinutes().toString().padStart(2, '0');
-    const seconds = now.getSeconds().toString().padStart(2, '0');
-    
-    digitalClock.textContent = `${hours}:${minutes}:${seconds}`;
-    
-    const dayNames = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-    const monthNames = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-    
-    clockDate.textContent = `${dayNames[now.getDay()]}, ${now.getDate()} de ${monthNames[now.getMonth()]} de ${now.getFullYear()}`;
-    
-    const hoursAngle = (now.getHours() % 12 + now.getMinutes() / 60) * 30;
-    const minutesAngle = (now.getMinutes() + now.getSeconds() / 60) * 6;
-    const secondsAngle = now.getSeconds() * 6;
-    
-    hourHand.setAttribute('transform', `rotate(${hoursAngle} 100 100)`);
-    minuteHand.setAttribute('transform', `rotate(${minutesAngle} 100 100)`);
-    secondHand.setAttribute('transform', `rotate(${secondsAngle} 100 100)`);
+function alarmAdd() {
+  const t = $('alarm-time').value;
+  if (!t) { toast('Selecciona una hora', 'error'); return; }
+  const a = { id: Date.now(), time: t, name: $('alarm-name').value || '', on: true };
+  alarms.push(a);
+  save('alarms', alarms);
+  renderAlarms();
+  toast('Alarma configurada', 'success');
+  $('alarm-name').value = '';
 }
 
-setInterval(updateClock, 1000);
-updateClock();
+function alarmDel(id) {
+  alarms = alarms.filter(a => a.id !== id);
+  save('alarms', alarms);
+  renderAlarms();
+  toast('Alarma eliminada', 'success', 2000);
+}
 
-// ========== WORLD CLOCK ==========
-const timezoneSelect = document.getElementById('timezoneSelect');
-const addTimezoneBtn = document.getElementById('addTimezone');
-const worldClockList = document.getElementById('worldClockList');
-let worldClocks = [];
+function alarmToggle(id) {
+  const a = alarms.find(a => a.id === id); if (!a) return;
+  a.on = !a.on;
+  save('alarms', alarms);
+  renderAlarms();
+}
 
-loadWorldClocks();
+function renderAlarms() {
+  const el = $('alarms-list');
+  if (!alarms.length) { el.innerHTML = '<div class="empty-msg">Sin alarmas activas</div>'; return; }
+  el.innerHTML = alarms.map(a => `
+    <div class="alarm-card ${a.on ? '' : 'inactive'}">
+      <div class="alarm-card-time">${a.time}</div>
+      <div class="alarm-card-info">
+        <div class="alarm-card-name">${a.name || 'Alarma'}</div>
+        <div class="alarm-card-status">${a.on ? 'Activa' : 'Inactiva'}</div>
+      </div>
+      <button class="alarm-toggle ${a.on ? 'on' : ''}" data-action="alarmToggle(${a.id})"></button>
+      <button class="btn btn-r" style="padding:5px 10px;font-size:8px" data-action="alarmDel(${a.id})">✕</button>
+    </div>`).join('');
+}
 
-addTimezoneBtn.addEventListener('click', () => {
-    const timezone = timezoneSelect.value;
-    const cityName = timezoneSelect.options[timezoneSelect.selectedIndex].text;
-    
-    if (worldClocks.find(wc => wc.timezone === timezone)) {
-        showToast('Esta ciudad ya está agregada', 'error');
-        return;
+function checkAlarms(now) {
+  const cur = `${p2(now.getHours())}:${p2(now.getMinutes())}`;
+  alarms.forEach(a => {
+    if (a.on && a.time === cur && now.getSeconds() === 0 && !a._fired) {
+      a._fired = true;
+      beep();
+      notify(`⏰ Alarma: ${a.time}`, a.name || 'Alarma activada');
+      toast(`⏰ Alarma: ${a.time}${a.name ? ' — ' + a.name : ''}`, 'success', 6000);
+      setTimeout(() => a._fired = false, 61000);
     }
-    
-    worldClocks.push({ timezone, cityName });
-    saveWorldClocks();
-    renderWorldClocks();
-    showToast(`${cityName} agregado`, 'success');
-});
+  });
+}
 
-function renderWorldClocks() {
-    worldClockList.innerHTML = worldClocks.map(wc => `
-        <div class="worldclock-item">
-            <div class="worldclock-city">${wc.cityName}</div>
-            <div class="worldclock-time" data-timezone="${wc.timezone}">--:--:--</div>
-            <button class="worldclock-delete" onclick="deleteWorldClock('${wc.timezone}')">✕</button>
+renderAlarms();
+
+/* ════════════════════════════════════════════════════
+   COUNTDOWN — MULTIPLE
+════════════════════════════════════════════════════ */
+let countdowns = []; // [{ id, name, target(ms), total(ms), iv }]
+
+function cdAdd() {
+  const d = $('cd-date').value;
+  if (!d) { toast('Selecciona una fecha', 'error'); return; }
+  const target = new Date(`${d}T${$('cd-time').value || '00:00'}`);
+  if (target <= new Date()) { toast('La fecha debe ser futura', 'error'); return; }
+  const name = $('cd-name').value.trim() || 'Evento';
+  const id   = Date.now();
+  const total = target.getTime() - Date.now();
+  const cd = { id, name, target: target.getTime(), total, iv: null };
+  cd.iv = setInterval(() => cdTickOne(id), 1000);
+  countdowns.push(cd);
+  cdRender();
+  cdTickOne(id);
+  $('cd-name').value = '';
+  $('cd-date').value = '';
+  toast(`"${name}" añadida`, 'success', 2000);
+}
+
+function cdDel(id) {
+  const cd = countdowns.find(c => c.id === id);
+  if (cd && cd.iv) clearInterval(cd.iv);
+  countdowns = countdowns.filter(c => c.id !== id);
+  cdRender();
+}
+
+function cdTickOne(id) {
+  const cd = countdowns.find(c => c.id === id);
+  if (!cd) return;
+  const diff = cd.target - Date.now();
+  const card = document.getElementById('cd-card-' + id);
+  if (!card) return;
+
+  if (diff <= 0) {
+    clearInterval(cd.iv);
+    card.classList.add('finished');
+    card.querySelector('.cd-card-num-d').textContent = '0';
+    card.querySelector('.cd-card-num-h').textContent = '0';
+    card.querySelector('.cd-card-num-m').textContent = '0';
+    card.querySelector('.cd-card-num-s').textContent = '0';
+    card.querySelector('.cd-card-bar').style.width = '100%';
+    beep();
+    toast(`⌛ ¡${cd.name} ha llegado!`, 'success', 5000);
+    return;
+  }
+
+  card.querySelector('.cd-card-num-d').textContent = Math.floor(diff / 86400000);
+  card.querySelector('.cd-card-num-h').textContent = Math.floor((diff % 86400000) / 3600000);
+  card.querySelector('.cd-card-num-m').textContent = Math.floor((diff % 3600000) / 60000);
+  card.querySelector('.cd-card-num-s').textContent = Math.floor((diff % 60000) / 1000);
+  const pct = Math.min(100, (1 - diff / cd.total) * 100);
+  card.querySelector('.cd-card-bar').style.width = pct + '%';
+}
+
+function cdRender() {
+  const list = $('cd-list');
+  const empty = $('cd-empty');
+  if (!countdowns.length) {
+    if (empty) empty.style.display = '';
+    // Remove all cards
+    list.querySelectorAll('.cd-card').forEach(c => c.remove());
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  // Add cards for new countdowns (don't re-render existing ones to avoid flicker)
+  countdowns.forEach(cd => {
+    if (!document.getElementById('cd-card-' + cd.id)) {
+      const dateStr = new Date(cd.target).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
+      const card = document.createElement('div');
+      card.className = 'cd-card';
+      card.id = 'cd-card-' + cd.id;
+      card.innerHTML = `
+        <div class="cd-card-header">
+          <span class="cd-card-name">${cd.name}</span>
+          <span style="display:flex;align-items:center;gap:6px">
+            <span class="cd-card-date">${dateStr}</span>
+            <button class="cd-card-del" data-action="cdDel(${cd.id})">✕</button>
+          </span>
         </div>
-    `).join('');
+        <div class="cd-card-units">
+          <div class="cd-card-unit"><div class="cd-card-num cd-card-num-d">0</div><div class="cd-card-lbl">Días</div></div>
+          <div class="cd-card-unit"><div class="cd-card-num cd-card-num-h">0</div><div class="cd-card-lbl">Horas</div></div>
+          <div class="cd-card-unit"><div class="cd-card-num cd-card-num-m">0</div><div class="cd-card-lbl">Min</div></div>
+          <div class="cd-card-unit"><div class="cd-card-num cd-card-num-s">0</div><div class="cd-card-lbl">Seg</div></div>
+        </div>
+        <div class="cd-card-progress"><div class="cd-card-bar" style="width:0%"></div></div>
+      `;
+      list.appendChild(card);
+    }
+  });
 }
 
-function deleteWorldClock(timezone) {
-    const city = worldClocks.find(wc => wc.timezone === timezone);
-    worldClocks = worldClocks.filter(wc => wc.timezone !== timezone);
-    saveWorldClocks();
-    renderWorldClocks();
-    showToast(`${city.cityName} eliminado`, 'success', 2000);
+/* ════════════════════════════════════════════════════
+   WORLD CLOCKS
+════════════════════════════════════════════════════ */
+
+function worldAdd() {
+  const tz = $('world-select').value;
+  if (worldList.includes(tz)) { toast('Ya está añadida', 'error'); return; }
+  worldList.push(tz);
+  save('worldClocks', worldList);
+  worldRender();
+  toast('Ciudad añadida', 'success', 2000);
 }
 
-function updateWorldClocks() {
-    worldClocks.forEach(wc => {
-        const element = document.querySelector(`[data-timezone="${wc.timezone}"]`);
-        if (element) {
-            const time = new Date().toLocaleTimeString('es-ES', {
-                timeZone: wc.timezone,
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit'
-            });
-            element.textContent = time;
-        }
+function worldDel(tz) {
+  worldList = worldList.filter(t => t !== tz);
+  save('worldClocks', worldList);
+  worldRender();
+}
+
+function worldRender() {
+  const local = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const now   = new Date();
+  $('world-grid').innerHTML = worldList.map(tz => {
+    const t    = now.toLocaleTimeString('es-ES', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const day  = now.toLocaleDateString('es-ES', { timeZone: tz, weekday: 'short' });
+    const city = tz.split('/').pop().replace(/_/g, ' ');
+    const id   = 'wc-' + tz.replace(/\//g, '-');
+    return `<div class="world-card ${tz === local ? 'local-tz' : ''}" id="${id}">
+      <div class="world-city">${city}</div>
+      <div class="world-time">${t}</div>
+      <div class="world-tz">${tz}</div>
+      <div class="world-day">${day}</div>
+      ${tz !== local ? `<button class="world-del" data-action="worldDel('${tz}')">✕</button>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function worldTick(now) {
+  worldList.forEach(tz => {
+    const el = document.getElementById('wc-' + tz.replace(/\//g, '-'));
+    if (!el) return;
+    el.querySelector('.world-time').textContent = now.toLocaleTimeString('es-ES', { timeZone: tz, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    el.querySelector('.world-day').textContent  = now.toLocaleDateString('es-ES', { timeZone: tz, weekday: 'short' });
+  });
+}
+
+worldRender();
+
+/* ════════════════════════════════════════════════════
+   DATE CALC
+════════════════════════════════════════════════════ */
+function dcDiff() {
+  const f = $('dc-from').value, t = $('dc-to').value;
+  if (!f || !t) { toast('Completa ambas fechas', 'error'); return; }
+  const diff = Math.abs(new Date(t) - new Date(f));
+  const days = Math.floor(diff / 86400000);
+  $('dc-diff-main').textContent = `${days.toLocaleString()} días`;
+  $('dc-diff-sub').innerHTML    = `${Math.floor(days / 7)} semanas · ${Math.floor(days / 30.44)} meses aprox. · ${Math.floor(days / 365.25)} años aprox.`;
+  $('dc-diff-result').style.display = 'block';
+}
+
+function dcAdd(sign) {
+  const bd = $('dc-base-date').value;
+  if (!bd) { toast('Completa la fecha', 'error'); return; }
+  const d = new Date(`${bd}T${$('dc-base-time').value || '00:00'}`);
+  d.setDate(d.getDate()       + sign * (parseInt($('dc-add-d').value) || 0));
+  d.setHours(d.getHours()     + sign * (parseInt($('dc-add-h').value) || 0));
+  d.setMinutes(d.getMinutes() + sign * (parseInt($('dc-add-m').value) || 0));
+  $('dc-add-result').textContent =
+    d.toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+    + ' · '
+    + d.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+}
+
+/* ════════════════════════════════════════════════════
+   TIME CALC
+════════════════════════════════════════════════════ */
+function tcCalc(op) {
+  const t1 = (parseInt($('tc-h1').value) || 0) * 3600 + (parseInt($('tc-m1').value) || 0) * 60 + (parseInt($('tc-s1').value) || 0);
+  const t2 = (parseInt($('tc-h2').value) || 0) * 3600 + (parseInt($('tc-m2').value) || 0) * 60 + (parseInt($('tc-s2').value) || 0);
+  const res = op === '+' ? t1 + t2 : Math.abs(t1 - t2);
+  $('tc-result').textContent = `${p2(Math.floor(res / 3600))}:${p2(Math.floor((res % 3600) / 60))}:${p2(res % 60)}`;
+}
+
+/* ════════════════════════════════════════════════════
+   WEEK
+════════════════════════════════════════════════════ */
+function getWeekNum(d) {
+  const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
+  const y = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+  return Math.ceil(((tmp - y) / 86400000 + 1) / 7);
+}
+
+function weekRender() {
+  const now = new Date();
+  const wn  = getWeekNum(now);
+  $('week-num').textContent  = wn;
+  $('week-pct').style.width  = (wn / 52 * 100) + '%';
+
+  const mon = new Date(now);
+  mon.setDate(now.getDate() - (now.getDay() || 7) + 1);
+  const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+  $('week-range').textContent =
+    mon.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })
+    + ' — '
+    + sun.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
+
+  const dayNames = ['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'];
+  $('week-cal').innerHTML = dayNames.map((dn, i) => {
+    const d = new Date(mon); d.setDate(mon.getDate() + i);
+    const today = d.toDateString() === now.toDateString();
+    return `<div class="week-day ${today ? 'today' : ''}">
+      <div class="week-day-name">${dn}</div>
+      <div class="week-day-num">${d.getDate()}</div>
+    </div>`;
+  }).join('');
+}
+
+weekRender();
+
+/* ════════════════════════════════════════════════════
+   AGE CALC
+════════════════════════════════════════════════════ */
+function ageCalc() {
+  const bv = $('age-birth').value;
+  if (!bv) { toast('Selecciona tu fecha de nacimiento', 'error'); return; }
+  const birth = new Date(bv), now = new Date();
+  if (birth > now) { toast('La fecha debe ser pasada', 'error'); return; }
+
+  let y = now.getFullYear() - birth.getFullYear();
+  let m = now.getMonth()   - birth.getMonth();
+  let d = now.getDate()    - birth.getDate();
+  if (d < 0) { m--; d += new Date(now.getFullYear(), now.getMonth(), 0).getDate(); }
+  if (m < 0) { y--; m += 12; }
+
+  $('age-y').textContent = y;
+  $('age-m').textContent = m;
+  $('age-d').textContent = d;
+
+  const totalD = Math.floor((now - birth) / 86400000);
+  const nextB  = new Date(now.getFullYear(), birth.getMonth(), birth.getDate());
+  if (nextB <= now) nextB.setFullYear(now.getFullYear() + 1);
+  const daysToB = Math.ceil((nextB - now) / 86400000);
+
+  $('age-details').innerHTML = `
+    <div class="age-detail-row"><span class="age-detail-label">Fecha de nacimiento</span><span class="age-detail-value">${birth.toLocaleDateString('es-ES',{day:'numeric',month:'long',year:'numeric'})}</span></div>
+    <div class="age-detail-row"><span class="age-detail-label">Total en días</span><span class="age-detail-value">${totalD.toLocaleString()}</span></div>
+    <div class="age-detail-row"><span class="age-detail-label">Total en semanas</span><span class="age-detail-value">${Math.floor(totalD/7).toLocaleString()}</span></div>
+    <div class="age-detail-row"><span class="age-detail-label">Total en meses</span><span class="age-detail-value">${(y*12+m).toLocaleString()}</span></div>
+    <div class="age-detail-row"><span class="age-detail-label">Total en horas</span><span class="age-detail-value">${(totalD*24).toLocaleString()}</span></div>
+    <div class="age-detail-row"><span class="age-detail-label">Próximo cumpleaños</span><span class="age-detail-value">${nextB.toLocaleDateString('es-ES',{day:'numeric',month:'long'})} (en ${daysToB} días)</span></div>
+  `;
+  toast('Edad calculada', 'success', 2000);
+}
+
+/* ════════════════════════════════════════════════════
+   AUDIO — Web Audio API
+════════════════════════════════════════════════════ */
+function beep() {
+  try {
+    const ctx  = new (window.AudioContext || window.webkitAudioContext)();
+    const vol  = (parseInt($('t-vol')?.value || 70) / 100) * 0.32;
+    const type = $('t-sound')?.value || 'beep';
+    const freqs = { beep: [880, 660], bell: [523, 659, 784], digital: [1047, 1047, 1047], soft: [440, 330] };
+    const f = freqs[type] || [880];
+    f.forEach((freq, i) => {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = freq;
+      o.type = type === 'bell' ? 'sine' : 'square';
+      g.gain.setValueAtTime(0, ctx.currentTime + i * 0.3);
+      g.gain.linearRampToValueAtTime(vol, ctx.currentTime + i * 0.3 + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.3 + 0.4);
+      o.start(ctx.currentTime + i * 0.3);
+      o.stop(ctx.currentTime + i * 0.3 + 0.4);
     });
+  } catch (e) {}
 }
 
-function saveWorldClocks() {
-    saveState('worldClocks', worldClocks);
+/* ════════════════════════════════════════════════════
+   DELEGATED CLICK HANDLER (replaces inline onclick)
+════════════════════════════════════════════════════ */
+document.addEventListener('click', function(e) {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const action = btn.getAttribute('data-action');
+  if (!action) return;
+
+  // Navigation
+  if (action.startsWith("go('"))          { const id = action.match(/go\('(\w+)'\)/)[1]; go(id); return; }
+  if (action === 'toggleFullscreen()')     { toggleFullscreen(); return; }
+
+  // Timer
+  if (action === 'timerStart()')           { timerStart(); return; }
+  if (action === 'timerPause()')           { timerPause(); return; }
+  if (action === 'timerReset()')           { timerReset(); return; }
+  if (action.startsWith('timerPreset('))   { const s = parseInt(action.match(/\d+/)[0]); timerPreset(s); return; }
+
+  // Pomodoro
+  if (action.startsWith("pomoMode("))      { const m = action.match(/pomoMode\('(\w+)'/)[1]; pomoMode(m, btn); return; }
+  if (action === 'pomoStart()')            { pomoStart(); return; }
+  if (action === 'pomoPause()')            { pomoPause(); return; }
+  if (action === 'pomoReset()')            { pomoReset(); return; }
+  if (action === 'pomoSkip()')             { pomoSkip(); return; }
+  if (action.startsWith('pomoAdj('))       { const [,k,d] = action.match(/pomoAdj\('(\w+)',(-?\d+)\)/); pomoAdj(k, parseInt(d)); return; }
+
+  // Stopwatch
+  if (action === 'swStart()')              { swStart(); return; }
+  if (action === 'swPause()')              { swPause(); return; }
+  if (action === 'swLap()')               { swLap(); return; }
+  if (action === 'swReset()')              { swReset(); return; }
+
+  // Alarm
+  if (action === 'alarmAdd()')             { alarmAdd(); return; }
+  if (action.startsWith('alarmDel('))      { const id = parseInt(action.match(/\d+/)[0]); alarmDel(id); return; }
+  if (action.startsWith('alarmToggle('))   { const id = parseInt(action.match(/\d+/)[0]); alarmToggle(id); return; }
+
+  // Countdown
+  if (action === 'cdAdd()')                { cdAdd(); return; }
+  if (action.startsWith('cdDel('))         { const id = parseInt(action.match(/\d+/)[0]); cdDel(id); return; }
+
+  // World
+  if (action === 'worldAdd()')             { worldAdd(); return; }
+  if (action.startsWith("worldDel('"))     { const tz = action.match(/worldDel\('([^']+)'\)/)[1]; worldDel(tz); return; }
+
+  // Date calc
+  if (action === 'dcDiff()')               { dcDiff(); return; }
+  if (action === 'dcAdd(1)')               { dcAdd(1); return; }
+  if (action === 'dcAdd(-1)')              { dcAdd(-1); return; }
+
+  // Time calc
+  if (action === "tcCalc('+')")            { tcCalc('+'); return; }
+  if (action === "tcCalc('-')")            { tcCalc('-'); return; }
+
+  // Age
+  if (action === 'ageCalc()')              { ageCalc(); return; }
+
+  // Timer settings
+  if (action === 'saveTimerSettings()')    { saveTimerSettings(); return; }
+  if (action === 'requestNotif()')         { requestNotif(); return; }
+});
+
+// Also handle oninput for timer settings (range/checkbox changes)
+document.addEventListener('change', function(e) {
+  const el = e.target;
+  if (el.id === 't-sound' || el.id === 't-vol' || el.id === 't-auto' || el.id === 't-notif') {
+    saveTimerSettings();
+    if (el.id === 't-notif') requestNotif();
+  }
+});
+document.addEventListener('input', function(e) {
+  if (e.target.id === 't-vol') {
+    const volVal = document.getElementById('t-vol-val');
+    if (volVal) volVal.textContent = e.target.value + '%';
+    saveTimerSettings();
+  }
+});
+
+/* ════════════════════════════════════════════════════
+   KEYBOARD SHORTCUTS
+════════════════════════════════════════════════════ */
+document.addEventListener('keydown', e => {
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+  const active = document.querySelector('.panel.active')?.id;
+
+  if (e.code === 'Space') {
+    e.preventDefault();
+    if (active === 'panel-timer')     TI.running    ? timerPause() : timerStart();
+    if (active === 'panel-stopwatch') SW.running    ? swPause()    : swStart();
+    if (active === 'panel-pomodoro')  POMO.running  ? pomoPause()  : pomoStart();
+  }
+  if (e.key.toLowerCase() === 'r') {
+    if (active === 'panel-timer')     timerReset();
+    if (active === 'panel-stopwatch') swReset();
+    if (active === 'panel-pomodoro')  pomoReset();
+  }
+  if (e.key.toLowerCase() === 'l') {
+    if (active === 'panel-stopwatch') swLap();
+  }
+});
+
+/* ════════════════════════════════════════════════════
+   FULLSCREEN
+════════════════════════════════════════════════════ */
+function toggleFullscreen() {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+  else document.exitFullscreen();
 }
 
-function loadWorldClocks() {
-    worldClocks = loadState('worldClocks', []);
-    renderWorldClocks();
-}
-
-setInterval(updateWorldClocks, 1000);
-
-// ========== DATE CALCULATOR ==========
-const dateFrom = document.getElementById('dateFrom');
-const dateTo = document.getElementById('dateTo');
-const calcDateDiffBtn = document.getElementById('calcDateDiff');
-const dateDiffResult = document.getElementById('dateDiffResult');
-const baseDate = document.getElementById('baseDate');
-const baseTime = document.getElementById('baseTime');
-const daysAmount = document.getElementById('daysAmount');
-const hoursAmount = document.getElementById('hoursAmount');
-const minutesAmount = document.getElementById('minutesAmount');
-const calcAddDaysBtn = document.getElementById('calcAddDays');
-const calcSubDaysBtn = document.getElementById('calcSubDays');
-const dateAddResult = document.getElementById('dateAddResult');
-
-calcDateDiffBtn.addEventListener('click', () => {
-    if (!dateFrom.value || !dateTo.value) {
-        showToast('Completa ambas fechas', 'error');
-        return;
-    }
-    
-    const d1 = new Date(dateFrom.value);
-    const d2 = new Date(dateTo.value);
-    const diff = Math.abs(d2 - d1);
-    
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    const weeks = Math.floor(days / 7);
-    const months = Math.floor(days / 30);
-    const years = Math.floor(days / 365);
-    
-    dateDiffResult.innerHTML = `
-        <strong>${days} días</strong><br>
-        (${weeks} semanas, ${months} meses, ${years} años aprox.)
-    `;
-});
-
-calcAddDaysBtn.addEventListener('click', () => {
-    if (!baseDate.value) {
-        showToast('Completa la fecha', 'error');
-        return;
-    }
-    
-    const dateTimeStr = `${baseDate.value}T${baseTime.value || '00:00'}`;
-    const date = new Date(dateTimeStr);
-    
-    const days = parseInt(daysAmount.value) || 0;
-    const hours = parseInt(hoursAmount.value) || 0;
-    const minutes = parseInt(minutesAmount.value) || 0;
-    
-    date.setDate(date.getDate() + days);
-    date.setHours(date.getHours() + hours);
-    date.setMinutes(date.getMinutes() + minutes);
-    
-    dateAddResult.innerHTML = `
-        <strong>${formatDate(date)}</strong><br>
-        <span style="font-size: 0.95rem; opacity: 0.8;">
-            ${date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
-        </span>
-    `;
-});
-
-calcSubDaysBtn.addEventListener('click', () => {
-    if (!baseDate.value) {
-        showToast('Completa la fecha', 'error');
-        return;
-    }
-    
-    const dateTimeStr = `${baseDate.value}T${baseTime.value || '00:00'}`;
-    const date = new Date(dateTimeStr);
-    
-    const days = parseInt(daysAmount.value) || 0;
-    const hours = parseInt(hoursAmount.value) || 0;
-    const minutes = parseInt(minutesAmount.value) || 0;
-    
-    date.setDate(date.getDate() - days);
-    date.setHours(date.getHours() - hours);
-    date.setMinutes(date.getMinutes() - minutes);
-    
-    dateAddResult.innerHTML = `
-        <strong>${formatDate(date)}</strong><br>
-        <span style="font-size: 0.95rem; opacity: 0.8;">
-            ${date.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
-        </span>
-    `;
-});
-
-// ========== TIME CALCULATOR ==========
-const tcHours1 = document.getElementById('tcHours1');
-const tcMinutes1 = document.getElementById('tcMinutes1');
-const tcSeconds1 = document.getElementById('tcSeconds1');
-const tcHours2 = document.getElementById('tcHours2');
-const tcMinutes2 = document.getElementById('tcMinutes2');
-const tcSeconds2 = document.getElementById('tcSeconds2');
-const tcAddBtn = document.getElementById('tcAdd');
-const tcSubtractBtn = document.getElementById('tcSubtract');
-const timeCalcResult = document.getElementById('timeCalcResult');
-
-tcAddBtn.addEventListener('click', () => {
-    const time1 = (parseInt(tcHours1.value) || 0) * 3600 + (parseInt(tcMinutes1.value) || 0) * 60 + (parseInt(tcSeconds1.value) || 0);
-    const time2 = (parseInt(tcHours2.value) || 0) * 3600 + (parseInt(tcMinutes2.value) || 0) * 60 + (parseInt(tcSeconds2.value) || 0);
-    
-    const result = time1 + time2;
-    displayTimeResult(result);
-});
-
-tcSubtractBtn.addEventListener('click', () => {
-    const time1 = (parseInt(tcHours1.value) || 0) * 3600 + (parseInt(tcMinutes1.value) || 0) * 60 + (parseInt(tcSeconds1.value) || 0);
-    const time2 = (parseInt(tcHours2.value) || 0) * 3600 + (parseInt(tcMinutes2.value) || 0) * 60 + (parseInt(tcSeconds2.value) || 0);
-    
-    const result = Math.abs(time1 - time2);
-    displayTimeResult(result);
-});
-
-function displayTimeResult(totalSeconds) {
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
-    
-    timeCalcResult.textContent = `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-}
-
-// ========== WEEK INFO ==========
-const weekNumber = document.getElementById('weekNumber');
-const weekRange = document.getElementById('weekRange');
-const weekCalendar = document.getElementById('weekCalendar');
-
-function updateWeekInfo() {
-    const now = new Date();
-    const startOfYear = new Date(now.getFullYear(), 0, 1);
-    const days = Math.floor((now - startOfYear) / (1000 * 60 * 60 * 24));
-    const weekNum = Math.ceil((days + startOfYear.getDay() + 1) / 7);
-    
-    weekNumber.textContent = weekNum;
-    
-    const startOfWeek = new Date(now);
-    startOfWeek.setDate(now.getDate() - now.getDay() + 1);
-    
-    const endOfWeek = new Date(startOfWeek);
-    endOfWeek.setDate(startOfWeek.getDate() + 6);
-    
-    weekRange.textContent = `${formatDate(startOfWeek)} - ${formatDate(endOfWeek)}`;
-    
-    const days_es = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
-    
-    weekCalendar.innerHTML = '';
-    for (let i = 0; i < 7; i++) {
-        const day = new Date(startOfWeek);
-        day.setDate(startOfWeek.getDate() + i);
-        
-        const isToday = day.toDateString() === now.toDateString();
-        
-        weekCalendar.innerHTML += `
-            <div class="week-day ${isToday ? 'today' : ''}">
-                <div class="week-day-name">${days_es[i]}</div>
-                <div class="week-day-number">${day.getDate()}</div>
-            </div>
-        `;
-    }
-}
-
-updateWeekInfo();
-
-// ========== AGE CALCULATOR ==========
-const birthDate = document.getElementById('birthDate');
-const calcAgeBtn = document.getElementById('calcAge');
-const ageYears = document.getElementById('ageYears');
-const ageMonths = document.getElementById('ageMonths');
-const ageDays = document.getElementById('ageDays');
-const ageDetails = document.getElementById('ageDetails');
-
-calcAgeBtn.addEventListener('click', () => {
-    if (!birthDate.value) {
-        showToast('Por favor, selecciona tu fecha de nacimiento', 'error');
-        return;
-    }
-    
-    const birth = new Date(birthDate.value);
-    const now = new Date();
-    
-    if (birth > now) {
-        showToast('La fecha de nacimiento debe ser pasada', 'error');
-        return;
-    }
-    
-    let years = now.getFullYear() - birth.getFullYear();
-    let months = now.getMonth() - birth.getMonth();
-    let days = now.getDate() - birth.getDate();
-    
-    if (days < 0) {
-        months--;
-        days += new Date(now.getFullYear(), now.getMonth(), 0).getDate();
-    }
-    
-    if (months < 0) {
-        years--;
-        months += 12;
-    }
-    
-    ageYears.textContent = years;
-    ageMonths.textContent = months;
-    ageDays.textContent = days;
-    
-    const totalDays = Math.floor((now - birth) / (1000 * 60 * 60 * 24));
-    const totalWeeks = Math.floor(totalDays / 7);
-    const totalMonths = years * 12 + months;
-    const totalHours = totalDays * 24;
-    
-    const nextBirthday = new Date(now.getFullYear(), birth.getMonth(), birth.getDate());
-    if (nextBirthday < now) {
-        nextBirthday.setFullYear(now.getFullYear() + 1);
-    }
-    const daysToNext = Math.floor((nextBirthday - now) / (1000 * 60 * 60 * 24));
-    
-    ageDetails.innerHTML = `
-        <div class="age-detail-item">
-            <span class="age-detail-label">Fecha de nacimiento:</span>
-            <span class="age-detail-value">${formatDate(birth)}</span>
-        </div>
-        <div class="age-detail-item">
-            <span class="age-detail-label">Total en días:</span>
-            <span class="age-detail-value">${totalDays.toLocaleString()}</span>
-        </div>
-        <div class="age-detail-item">
-            <span class="age-detail-label">Total en semanas:</span>
-            <span class="age-detail-value">${totalWeeks.toLocaleString()}</span>
-        </div>
-        <div class="age-detail-item">
-            <span class="age-detail-label">Total en meses:</span>
-            <span class="age-detail-value">${totalMonths}</span>
-        </div>
-        <div class="age-detail-item">
-            <span class="age-detail-label">Total en horas:</span>
-            <span class="age-detail-value">${totalHours.toLocaleString()}</span>
-        </div>
-        <div class="age-detail-item">
-            <span class="age-detail-label">Próximo cumpleaños:</span>
-            <span class="age-detail-value">${formatDate(nextBirthday)} (${daysToNext} días)</span>
-        </div>
-    `;
-    
-    showToast('Edad calculada correctamente', 'success');
-});
-
-// ========== KEYBOARD SHORTCUTS ==========
-document.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
-    
-    switch(e.key.toLowerCase()) {
-        case ' ':
-            e.preventDefault();
-            if (document.getElementById('tab-timer').classList.contains('active')) {
-                if (isRunning) pauseTimer();
-                else startTimer();
-            }
-            break;
-        case 'r':
-            e.preventDefault();
-            if (document.getElementById('tab-timer').classList.contains('active')) {
-                resetTimer();
-            }
-            break;
-        case 'f':
-            e.preventDefault();
-            fullscreenBtn.click();
-            break;
-        case 't':
-            e.preventDefault();
-            themeToggle.click();
-            break;
-    }
-});
-
-window.addEventListener('keydown', (e) => {
-    if (e.key === ' ' && e.target === document.body) {
-        e.preventDefault();
-    }
-});
+/* ════════════════════════════════════════════════════
+   INIT
+════════════════════════════════════════════════════ */
+requestNotif();
